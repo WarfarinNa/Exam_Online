@@ -1,0 +1,38 @@
+### Java/Maven ###
+target/
+*.class
+*.log
+*.ctxt
+.mtj.tmp/
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# 彻底忽略生产环境敏感配置
+# 直接写死文件名，最暴力也最有效
+application-prod.yml
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+gen/
+
+### VS Code ###
+.vscode/
+bin/
+
+### Windows/Mac System ###
+Thumbs.db
+.DS_Store
+
+### Build Tools ###
+.mvn/
+mvnw
+mvnw.cmd

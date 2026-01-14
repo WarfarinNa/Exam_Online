@@ -1,0 +1,107 @@
+package org.development.exam_online.service;
+
+import org.development.exam_online.common.PageResult;
+import org.development.exam_online.dao.dto.AutoGeneratePaperRule;
+import org.development.exam_online.dao.entity.ExamPaper;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 试卷服务接口
+ */
+public interface ExamPaperService {
+
+    /**
+     * 创建试卷
+     * @param examPaper 试卷信息
+     * @return 创建的试卷
+     */
+    ExamPaper createPaper(ExamPaper examPaper);
+
+    /**
+     * 手动组卷 - 添加题目到试卷
+     * @param paperId 试卷ID
+     * @param questionIds 题目ID列表
+     * @param scores 对应题目的分值列表（可选）
+     * @return 添加结果消息
+     */
+    String addQuestionsToPaper(Long paperId, List<Long> questionIds, List<Double> scores);
+
+    /**
+     * 手动组卷 - 移除试卷中的题目
+     * @param paperId 试卷ID
+     * @param questionIds 要移除的题目ID列表
+     * @return 移除结果消息
+     */
+    String removeQuestionsFromPaper(Long paperId, List<Long> questionIds);
+
+    /**
+     * 自动组卷
+     * @param paperId 试卷ID
+     * @param rule 自动组卷规则
+     * @return 组卷结果消息
+     */
+    String autoGeneratePaper(Long paperId, AutoGeneratePaperRule rule);
+
+    /**
+     * 根据ID获取试卷详情（包含题目列表）
+     * @param paperId 试卷ID
+     * @return 试卷详情（包含题目列表）
+     */
+    Map<String, Object> getPaperById(Long paperId);
+
+    /**
+     * 预览试卷（不包含答案）
+     * @param paperId 试卷ID
+     * @return 试卷预览信息
+     */
+    Map<String, Object> previewPaper(Long paperId);
+
+    /**
+     * 更新试卷基本信息
+     * @param paperId 试卷ID
+     * @param examPaper 试卷信息
+     * @return 更新结果消息
+     */
+    String updatePaper(Long paperId, ExamPaper examPaper);
+
+    /**
+     * 删除试卷
+     * @param paperId 试卷ID
+     * @return 删除结果消息
+     */
+    String deletePaper(Long paperId);
+
+    /**
+     * 获取试卷列表
+     * @param pageNum 页码
+     * @param pageSize 每页数量
+     * @param keyword 搜索关键词
+     * @param type 试卷类型筛选
+     * @param createdBy 创建者ID筛选
+     * @return 分页结果
+     */
+    PageResult<ExamPaper> getPaperList(Integer pageNum, Integer pageSize, String keyword, String type, Long createdBy);
+
+    /**
+     * 获取试卷中的题目列表
+     * @param paperId 试卷ID
+     * @return 题目列表
+     */
+    List<Map<String, Object>> getPaperQuestions(Long paperId);
+
+    /**
+     * 计算试卷总分
+     * @param paperId 试卷ID
+     * @return 试卷总分
+     */
+    Double calculateTotalScore(Long paperId);
+
+    /**
+     * 清空试卷中的所有题目
+     * @param paperId 试卷ID
+     * @return 清空结果消息
+     */
+    String clearAllQuestions(Long paperId);
+}
