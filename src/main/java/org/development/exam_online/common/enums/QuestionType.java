@@ -2,6 +2,8 @@ package org.development.exam_online.common.enums;
 
 import lombok.Getter;
 
+import java.util.Arrays;
+
 /**
  * 题目类型枚举
  */
@@ -54,6 +56,26 @@ public enum QuestionType {
             }
         }
         return false;
+    }
+
+    /**
+     * 获取所有题型代码列表
+     * @return 题型代码数组
+     */
+    public static String[] getAllCodes() {
+        return Arrays.stream(values())
+                .map(QuestionType::getCode)
+                .toArray(String[]::new);
+    }
+
+    /**
+     * 获取所有题型标签列表
+     * @return 题型标签数组
+     */
+    public static String[] getAllLabels() {
+        return Arrays.stream(values())
+                .map(QuestionType::getLabel)
+                .toArray(String[]::new);
     }
 }
 

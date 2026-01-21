@@ -1,0 +1,5 @@
+spring:
+  profiles:
+    active: dev
+knife4j:
+  enable: true

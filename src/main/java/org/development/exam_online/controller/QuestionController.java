@@ -6,16 +6,14 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.development.exam_online.common.PageResult;
 import org.development.exam_online.common.Result;
-import org.development.exam_online.common.enums.QuestionType;
 import org.development.exam_online.dao.entity.Question;
 import org.development.exam_online.service.QuestionService;
+import org.development.exam_online.util.QuestionTypeUtil;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * 题目管理控制器
@@ -96,7 +94,7 @@ public class QuestionController {
      * 获取题目列表（支持分页和搜索）
      * @param pageNum 页码
      * @param pageSize 每页数量
-     * @param type 题型筛选（单选题、多选题、判断题、填空题、简答题等）
+     * @param type 题型代码筛选（参考QuestionType枚举：single、multiple、judge、blank、short）
      * @param categoryId 分类ID筛选
      * @param keyword 搜索关键词（题目内容）
      * @param createdBy 创建者ID筛选
@@ -118,7 +116,7 @@ public class QuestionController {
     /**
      * 搜索题目
      * @param keyword 搜索关键词
-     * @param type 题型筛选
+     * @param type 题型代码筛选（参考QuestionType枚举：single、multiple、judge、blank、short）
      * @param categoryId 分类ID筛选
      * @param pageNum 页码
      * @param pageSize 每页数量
@@ -178,12 +176,12 @@ public class QuestionController {
 
     /**
      * 根据题型获取题目列表
-     * @param type 题型
+     * @param type 题型代码（参考QuestionType枚举：single、multiple、judge、blank、short）
      * @param pageNum 页码
      * @param pageSize 每页数量
      * @return 题目列表
      */
-    @Operation(summary = "根据题型获取题目", description = "根据题型（单选题、多选题、判断题等）获取题目列表")
+    @Operation(summary = "根据题型获取题目", description = "根据题型代码获取题目列表（single-单选题、multiple-多选题、judge-判断题、blank-填空题、short-简答题）")
     @GetMapping("/type/{type}")
     public Result<PageResult<Question>> getQuestionsByType(
             @PathVariable String type,
@@ -197,15 +195,10 @@ public class QuestionController {
      * 获取所有题目类型列表
      * @return 题目类型列表（包含code和label）
      */
-    @Operation(summary = "获取题目类型列表", description = "获取所有可用的题目类型（单选题、多选题、判断题、填空题、简答题）")
+    @Operation(summary = "获取题目类型列表", description = "获取所有可用的题目类型（基于QuestionType枚举）")
     @GetMapping("/types")
     public Result<List<Map<String, String>>> getQuestionTypes() {
-        List<Map<String, String>> types = Arrays.stream(QuestionType.values())
-                .map(type -> Map.of(
-                        "code", type.getCode(),
-                        "label", type.getLabel()
-                ))
-                .collect(Collectors.toList());
+        List<Map<String, String>> types = QuestionTypeUtil.getTypeList();
         return Result.success(types);
     }
 }

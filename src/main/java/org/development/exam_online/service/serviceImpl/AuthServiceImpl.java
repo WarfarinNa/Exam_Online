@@ -2,6 +2,8 @@ package org.development.exam_online.service.serviceImpl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
+import org.development.exam_online.common.exception.BusinessException;
+import org.development.exam_online.common.exception.ErrorCode;
 import org.development.exam_online.dao.dto.LoginRequest;
 import org.development.exam_online.dao.dto.LoginResponse;
 import org.development.exam_online.dao.dto.RegisterRequest;
@@ -44,7 +46,7 @@ public class AuthServiceImpl implements AuthService {
         userQuery.eq(User::getUsername, request.getUsername());
         User existingUser = userMapper.selectOne(userQuery);
         if (existingUser != null) {
-            throw new RuntimeException("用户名已存在");
+            throw new BusinessException(ErrorCode.USERNAME_EXISTS);
         }
 
         // 检查邮箱是否已存在（如果提供了邮箱）
@@ -53,7 +55,7 @@ public class AuthServiceImpl implements AuthService {
             emailQuery.eq(User::getEmail, request.getEmail());
             User existingEmail = userMapper.selectOne(emailQuery);
             if (existingEmail != null) {
-                throw new RuntimeException("邮箱已被注册");
+                throw new BusinessException(ErrorCode.EMAIL_EXISTS);
             }
         }
 
@@ -62,7 +64,7 @@ public class AuthServiceImpl implements AuthService {
         roleQuery.eq(Role::getRoleName, STUDENT_ROLE_NAME);
         Role studentRole = roleMapper.selectOne(roleQuery);
         if (studentRole == null) {
-            throw new RuntimeException("系统错误：学生角色不存在");
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR.getCode(), "系统错误：学生角色不存在");
         }
 
         // 创建新用户
@@ -81,7 +83,7 @@ public class AuthServiceImpl implements AuthService {
         if (result > 0) {
             return "注册成功";
         } else {
-            throw new RuntimeException("注册失败");
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR.getCode(), "注册失败");
         }
     }
 
@@ -98,12 +100,12 @@ public class AuthServiceImpl implements AuthService {
         User user = userMapper.selectOne(query);
 
         if (user == null) {
-            throw new RuntimeException("用户名或密码错误");
+            throw new BusinessException(ErrorCode.PASSWORD_ERROR);
         }
 
         // 验证密码
         if (!PasswordUtils.matches(request.getPassword(), user.getPassword())) {
-            throw new RuntimeException("用户名或密码错误");
+            throw new BusinessException(ErrorCode.PASSWORD_ERROR);
         }
 
         // 生成JWT token

@@ -40,6 +40,10 @@ public class Question {
 
     @TableField("created_at")
     private LocalDateTime createdAt;
+    //1.简单 2.普通 3.困难
+    @TableField("difficulty")
+    private Integer difficulty;
+
 }
 
 
