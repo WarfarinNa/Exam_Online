@@ -29,6 +29,18 @@ public class ExamCheatLog {
 
     @TableField("last_time")
     private LocalDateTime lastTime;
+
+    @TableField("created_by")
+    private Long createdBy;
+
+    @TableField("deleted")
+    private Integer deleted;
+
+    @TableField("created_at")
+    private LocalDateTime createdAt;
+
+    @TableField("updated_at")
+    private LocalDateTime updatedAt;
 }
 
 

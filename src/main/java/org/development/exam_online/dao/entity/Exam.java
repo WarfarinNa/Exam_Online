@@ -31,11 +31,20 @@ public class Exam {
     @TableField("allow_roles")
     private String allowRoles;
 
+    @TableField("status")
+    private Integer status;
+
     @TableField("created_by")
     private Long createdBy;
 
     @TableField("created_at")
     private LocalDateTime createdAt;
+
+    @TableField("deleted")
+    private Integer deleted;
+
+    @TableField("updated_at")
+    private LocalDateTime updatedAt;
 }
 
 

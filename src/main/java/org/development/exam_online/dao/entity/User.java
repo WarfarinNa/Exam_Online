@@ -41,6 +41,12 @@ public class User {
     @TableField("role_id")
     private Long roleId;
 
+    @TableField("created_by")
+    private Long createdBy;
+
+    @TableField("deleted")
+    private Integer deleted;
+
     @TableField("created_at")
     private LocalDateTime createdAt;
 

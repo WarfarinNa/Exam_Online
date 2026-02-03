@@ -7,8 +7,9 @@ import lombok.RequiredArgsConstructor;
 import org.development.exam_online.common.PageResult;
 import org.development.exam_online.common.Result;
 import org.development.exam_online.dao.entity.Exam;
+import org.development.exam_online.security.AuthContext;
+import org.development.exam_online.security.RequirePermission;
 import org.development.exam_online.service.ExamService;
-import org.development.exam_online.util.JwtUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -26,36 +27,6 @@ import java.util.Map;
 public class ExamController {
 
     private final ExamService examService;
-    private final JwtUtils jwtUtils;
-
-    /**
-     * 从Authorization header中提取token并解析用户ID
-     * @param authorization Authorization header
-     * @return 用户ID
-     */
-    private Long getUserIdFromToken(String authorization) {
-        if (authorization == null || authorization.isEmpty()) {
-            throw new RuntimeException("未提供认证信息");
-        }
-
-        String token;
-        if (authorization.startsWith("Bearer ")) {
-            token = authorization.substring(7);
-        } else {
-            token = authorization;
-        }
-
-        if (!jwtUtils.validateToken(token)) {
-            throw new RuntimeException("Token无效或已过期");
-        }
-
-        Long userId = jwtUtils.getUserIdFromToken(token);
-        if (userId == null) {
-            throw new RuntimeException("无法从Token中获取用户信息");
-        }
-
-        return userId;
-    }
 
     /**
      * 创建考试
@@ -64,6 +35,7 @@ public class ExamController {
      */
     @Operation(summary = "创建考试", description = "创建新考试，需要关联试卷，设置考试时间和权限范围")
     @PostMapping
+    @RequirePermission({"exam:manage"})
     public Result<Exam> createExam(@Valid @RequestBody Exam exam) {
         Exam createdExam = examService.createExam(exam);
         return Result.success(createdExam);
@@ -77,6 +49,7 @@ public class ExamController {
      */
     @Operation(summary = "发布试卷", description = "将试卷发布为考试，设置考试时间和权限范围")
     @PostMapping("/publish/{paperId}")
+    @RequirePermission({"exam:manage"})
     public Result<Exam> publishPaper(
             @PathVariable Long paperId,
             @Valid @RequestBody Exam exam) {
@@ -104,6 +77,7 @@ public class ExamController {
      */
     @Operation(summary = "更新考试信息", description = "更新考试的基本信息（名称、时间、权限等）")
     @PutMapping("/{examId}")
+    @RequirePermission({"exam:manage"})
     public Result<String> updateExam(
             @PathVariable Long examId,
             @Valid @RequestBody Exam exam) {
@@ -120,6 +94,7 @@ public class ExamController {
      */
     @Operation(summary = "设置考试时间", description = "设置或修改考试的开始时间和结束时间")
     @PutMapping("/{examId}/time")
+    @RequirePermission({"exam:manage"})
     public Result<String> setExamTime(
             @PathVariable Long examId,
             @RequestParam LocalDateTime startTime,
@@ -136,6 +111,7 @@ public class ExamController {
      */
     @Operation(summary = "设置考试权限", description = "设置考试允许参与的角色（如：学生、特定班级等）")
     @PutMapping("/{examId}/permissions")
+    @RequirePermission({"exam:manage"})
     public Result<String> setExamPermissions(
             @PathVariable Long examId,
             @RequestBody List<String> allowRoles) {
@@ -150,6 +126,7 @@ public class ExamController {
      */
     @Operation(summary = "删除考试", description = "删除指定考试（需要检查是否有考试记录）")
     @DeleteMapping("/{examId}")
+    @RequirePermission({"exam:manage"})
     public Result<String> deleteExam(@PathVariable Long examId) {
         String message = examService.deleteExam(examId);
         return Result.success(message);
@@ -167,6 +144,7 @@ public class ExamController {
      */
     @Operation(summary = "获取考试列表", description = "获取考试列表，支持分页、搜索和时间筛选")
     @GetMapping
+    @RequirePermission({"exam:manage"})
     public Result<PageResult<Exam>> getExamList(
             @RequestParam(defaultValue = "1") Integer pageNum,
             @RequestParam(defaultValue = "10") Integer pageSize,
@@ -202,11 +180,12 @@ public class ExamController {
      */
     @Operation(summary = "获取我创建的考试", description = "获取当前登录用户创建的考试列表")
     @GetMapping("/my-exams")
+    @RequirePermission({"exam:manage"})
     public Result<PageResult<Exam>> getMyExams(
             @RequestParam(defaultValue = "1") Integer pageNum,
             @RequestParam(defaultValue = "10") Integer pageSize,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
-        Long userId = getUserIdFromToken(authorization);
+        Long userId = AuthContext.getUserId();
         PageResult<Exam> result = examService.getMyExams(userId, pageNum, pageSize);
         return Result.success(result);
     }
@@ -218,6 +197,7 @@ public class ExamController {
      */
     @Operation(summary = "取消发布考试", description = "取消已发布的考试，学生将无法看到和参加该考试")
     @PutMapping("/{examId}/unpublish")
+    @RequirePermission({"exam:manage"})
     public Result<String> unpublishExam(@PathVariable Long examId) {
         String message = examService.unpublishExam(examId);
         return Result.success(message);
@@ -230,6 +210,7 @@ public class ExamController {
      */
     @Operation(summary = "获取考试统计", description = "获取考试的统计信息（参与人数、已完成人数、平均分等）")
     @GetMapping("/{examId}/statistics")
+    @RequirePermission({"exam:manage"})
     public Result<Map<String, Object>> getExamStatistics(@PathVariable Long examId) {
         Map<String, Object> statistics = examService.getExamStatistics(examId);
         return Result.success(statistics);

@@ -16,8 +16,11 @@ public class ExamPaperQuestion {
     @TableField("question_id")
     private Long questionId;
 
-    @TableField("score")
-    private BigDecimal score;
+    @TableField("question_score")
+    private BigDecimal questionScore;
+
+    @TableField("question_order")
+    private Integer questionOrder;
 }
 
 

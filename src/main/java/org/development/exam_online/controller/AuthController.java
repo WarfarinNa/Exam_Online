@@ -8,8 +8,11 @@ import org.development.exam_online.common.Result;
 import org.development.exam_online.dao.dto.LoginRequest;
 import org.development.exam_online.dao.dto.LoginResponse;
 import org.development.exam_online.dao.dto.RegisterRequest;
+import org.development.exam_online.dao.entity.User;
 import org.development.exam_online.service.AuthService;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 /**
  * 认证控制器
@@ -57,6 +60,18 @@ public class AuthController {
     public Result<String> logout(@RequestHeader(value = "Authorization", required = false) String authorization) {
         String message = authService.logout(authorization);
         return Result.success(message);
+    }
+
+    @Operation(summary = "获取当前登录用户", description = "从JWT中解析用户身份，返回当前登录用户信息（脱敏）")
+    @GetMapping("/me")
+    public Result<User> me(@RequestHeader(value = "Authorization", required = false) String authorization) {
+        return Result.success(authService.me(authorization));
+    }
+
+    @Operation(summary = "获取当前用户权限码", description = "返回当前用户所属角色绑定的 permission_code 列表")
+    @GetMapping("/permissions")
+    public Result<List<String>> myPermissions(@RequestHeader(value = "Authorization", required = false) String authorization) {
+        return Result.success(authService.myPermissionCodes(authorization));
     }
 }
 

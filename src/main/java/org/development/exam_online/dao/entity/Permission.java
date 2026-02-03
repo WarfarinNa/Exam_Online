@@ -10,7 +10,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 
-import java.io.Serializable;
+import java.time.LocalDateTime;
 
 @TableName("permission")
 @Data
@@ -31,6 +31,18 @@ public class Permission {
 
     @TableField("description")
     private String description;
+
+    @TableField("created_by")
+    private Long createdBy;
+
+    @TableField("deleted")
+    private Integer deleted;
+
+    @TableField("created_at")
+    private LocalDateTime createdAt;
+
+    @TableField("updated_at")
+    private LocalDateTime updatedAt;
 
 }
 
