@@ -1,33 +1,32 @@
 package org.development.exam_online.service.serviceImpl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.development.exam_online.common.PageResult;
+import org.development.exam_online.common.exception.BusinessException;
+import org.development.exam_online.common.exception.ErrorCode;
 import org.development.exam_online.dao.entity.Exam;
 import org.development.exam_online.dao.entity.ExamPaper;
 import org.development.exam_online.dao.entity.ExamRecord;
 import org.development.exam_online.dao.mapper.ExamMapper;
 import org.development.exam_online.dao.mapper.ExamPaperMapper;
 import org.development.exam_online.dao.mapper.ExamRecordMapper;
+import org.development.exam_online.security.AuthContext;
 import org.development.exam_online.service.ExamService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
+import java.util.Objects;
 
-/**
- * 考试服务实现类
- */
 @Service
 @RequiredArgsConstructor
 public class ExamServiceImpl implements ExamService {
@@ -35,362 +34,243 @@ public class ExamServiceImpl implements ExamService {
     private final ExamMapper examMapper;
     private final ExamPaperMapper examPaperMapper;
     private final ExamRecordMapper examRecordMapper;
-    private final ObjectMapper objectMapper;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /**
-     * 创建考试
-     * @param exam 考试信息
-     * @return 创建的考试
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Exam createExam(Exam exam) {
-        // 验证试卷是否存在
+        if (exam == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "考试信息不能为空");
+        }
         if (exam.getPaperId() == null) {
-            throw new RuntimeException("试卷ID不能为空");
+            throw new BusinessException(ErrorCode.EXAM_PAPER_NOT_FOUND);
         }
         ExamPaper paper = examPaperMapper.selectById(exam.getPaperId());
-        if (paper == null) {
-            throw new RuntimeException("试卷不存在");
+        if (paper == null || Objects.equals(paper.getDeleted(), 1)) {
+            throw new BusinessException(ErrorCode.EXAM_PAPER_NOT_FOUND);
         }
-
-        // 验证考试名称
-        if (!StringUtils.hasText(exam.getName())) {
-            throw new RuntimeException("考试名称不能为空");
+        exam.setId(null);
+        exam.setDeleted(0);
+        if (exam.getCreatedBy() == null) {
+            Long userId = AuthContext.getUserId();
+            if (userId != null) {
+                exam.setCreatedBy(userId);
+            }
         }
-
-        // 验证考试时间
-        if (exam.getStartTime() == null || exam.getEndTime() == null) {
-            throw new RuntimeException("考试开始时间和结束时间不能为空");
+        // 默认草稿状态 0
+        if (exam.getStatus() == null) {
+            exam.setStatus(0);
         }
-        if (exam.getEndTime().isBefore(exam.getStartTime()) || exam.getEndTime().isEqual(exam.getStartTime())) {
-            throw new RuntimeException("考试结束时间必须晚于开始时间");
+        int inserted = examMapper.insert(exam);
+        if (inserted <= 0) {
+            throw new BusinessException(ErrorCode.DATABASE_ERROR, "创建考试失败");
         }
-
-        // 设置创建时间
-        exam.setCreatedAt(LocalDateTime.now());
-
-        int result = examMapper.insert(exam);
-        if (result > 0) {
-            return examMapper.selectById(exam.getId());
-        } else {
-            throw new RuntimeException("创建考试失败");
-        }
+        return examMapper.selectById(exam.getId());
     }
 
-    /**
-     * 发布试卷为考试
-     * @param paperId 试卷ID
-     * @param exam 考试信息
-     * @return 创建的考试
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Exam publishPaper(Long paperId, Exam exam) {
-        // 验证试卷是否存在
-        ExamPaper paper = examPaperMapper.selectById(paperId);
-        if (paper == null) {
-            throw new RuntimeException("试卷不存在");
+        if (paperId == null) {
+            throw new BusinessException(ErrorCode.EXAM_PAPER_NOT_FOUND);
         }
-
-        // 设置试卷ID
+        ExamPaper paper = examPaperMapper.selectById(paperId);
+        if (paper == null || Objects.equals(paper.getDeleted(), 1)) {
+            throw new BusinessException(ErrorCode.EXAM_PAPER_NOT_FOUND);
+        }
+        if (exam == null) {
+            exam = new Exam();
+        }
+        exam.setId(null);
         exam.setPaperId(paperId);
-
-        // 如果考试名称为空，使用试卷名称
         if (!StringUtils.hasText(exam.getName())) {
             exam.setName(paper.getName());
         }
-
-        return createExam(exam);
+        if (exam.getCreatedBy() == null) {
+            Long userId = AuthContext.getUserId();
+            if (userId != null) {
+                exam.setCreatedBy(userId);
+            }
+        }
+        // 发布状态 1
+        exam.setStatus(1);
+        if (exam.getStartTime() == null || exam.getEndTime() == null) {
+            // 若未设置时间，默认当前时间开始，按试卷时长推结束时间
+            LocalDateTime now = LocalDateTime.now();
+            exam.setStartTime(now);
+            Integer duration = paper.getDuration();
+            if (duration == null || duration <= 0) {
+                duration = 60;
+            }
+            exam.setEndTime(now.plusMinutes(duration));
+        }
+        int inserted = examMapper.insert(exam);
+        if (inserted <= 0) {
+            throw new BusinessException(ErrorCode.DATABASE_ERROR, "发布考试失败");
+        }
+        return examMapper.selectById(exam.getId());
     }
 
-    /**
-     * 根据ID获取考试详情
-     * @param examId 考试ID
-     * @return 考试详情
-     */
     @Override
     public Exam getExamById(Long examId) {
-        Exam exam = examMapper.selectById(examId);
-        if (exam == null) {
-            throw new RuntimeException("考试不存在");
-        }
-        return exam;
+        return requireActiveExam(examId);
     }
 
-    /**
-     * 更新考试信息
-     * @param examId 考试ID
-     * @param exam 考试信息
-     * @return 更新结果消息
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String updateExam(Long examId, Exam exam) {
-        Exam existingExam = examMapper.selectById(examId);
-        if (existingExam == null) {
-            throw new RuntimeException("考试不存在");
+        requireActiveExam(examId);
+        if (exam == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "考试信息不能为空");
         }
-
-        // 如果更新了试卷ID，验证试卷是否存在
-        if (exam.getPaperId() != null && !exam.getPaperId().equals(existingExam.getPaperId())) {
-            ExamPaper paper = examPaperMapper.selectById(exam.getPaperId());
-            if (paper == null) {
-                throw new RuntimeException("试卷不存在");
-            }
-        }
-
-        // 如果更新了时间，验证时间有效性
-        if (exam.getStartTime() != null && exam.getEndTime() != null) {
-            if (exam.getEndTime().isBefore(exam.getStartTime()) || exam.getEndTime().isEqual(exam.getStartTime())) {
-                throw new RuntimeException("考试结束时间必须晚于开始时间");
-            }
-        }
-
-        // 设置ID
         exam.setId(examId);
-
-        int result = examMapper.updateById(exam);
-        if (result > 0) {
-            return "考试信息更新成功";
-        } else {
-            throw new RuntimeException("考试信息更新失败");
+        int updated = examMapper.updateById(exam);
+        if (updated <= 0) {
+            throw new BusinessException(ErrorCode.DATABASE_ERROR, "更新考试失败");
         }
+        return "更新成功";
     }
 
-    /**
-     * 设置考试时间
-     * @param examId 考试ID
-     * @param startTime 开始时间
-     * @param endTime 结束时间
-     * @return 设置结果消息
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String setExamTime(Long examId, LocalDateTime startTime, LocalDateTime endTime) {
-        Exam exam = examMapper.selectById(examId);
-        if (exam == null) {
-            throw new RuntimeException("考试不存在");
+        requireActiveExam(examId);
+        if (startTime == null || endTime == null || !endTime.isAfter(startTime)) {
+            throw new BusinessException(ErrorCode.EXAM_DURATION_INVALID);
         }
-
-        if (startTime == null || endTime == null) {
-            throw new RuntimeException("考试开始时间和结束时间不能为空");
+        Exam update = new Exam();
+        update.setId(examId);
+        update.setStartTime(startTime);
+        update.setEndTime(endTime);
+        int updated = examMapper.updateById(update);
+        if (updated <= 0) {
+            throw new BusinessException(ErrorCode.DATABASE_ERROR, "设置考试时间失败");
         }
-
-        if (endTime.isBefore(startTime) || endTime.isEqual(startTime)) {
-            throw new RuntimeException("考试结束时间必须晚于开始时间");
-        }
-
-        Exam updateExam = new Exam();
-        updateExam.setId(examId);
-        updateExam.setStartTime(startTime);
-        updateExam.setEndTime(endTime);
-
-        int result = examMapper.updateById(updateExam);
-        if (result > 0) {
-            return "考试时间设置成功";
-        } else {
-            throw new RuntimeException("考试时间设置失败");
-        }
+        return "考试时间设置成功";
     }
 
-    /**
-     * 设置考试权限范围
-     * @param examId 考试ID
-     * @param allowRoles 允许的角色列表
-     * @return 设置结果消息
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String setExamPermissions(Long examId, List<String> allowRoles) {
-        Exam exam = examMapper.selectById(examId);
-        if (exam == null) {
-            throw new RuntimeException("考试不存在");
-        }
-
-        if (allowRoles == null || allowRoles.isEmpty()) {
-            throw new RuntimeException("允许的角色列表不能为空");
-        }
-
-        // 将角色列表转换为JSON字符串存储
-        String allowRolesJson;
+        requireActiveExam(examId);
+        Exam update = new Exam();
+        update.setId(examId);
         try {
-            allowRolesJson = objectMapper.writeValueAsString(allowRoles);
-        } catch (Exception e) {
-            throw new RuntimeException("角色列表格式错误");
+            String json = allowRoles == null ? "[]" : objectMapper.writeValueAsString(allowRoles);
+            update.setAllowRoles(json);
+        } catch (JsonProcessingException e) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "权限范围格式错误");
         }
-
-        Exam updateExam = new Exam();
-        updateExam.setId(examId);
-        updateExam.setAllowRoles(allowRolesJson);
-
-        int result = examMapper.updateById(updateExam);
-        if (result > 0) {
-            return "考试权限设置成功";
-        } else {
-            throw new RuntimeException("考试权限设置失败");
+        int updated = examMapper.updateById(update);
+        if (updated <= 0) {
+            throw new BusinessException(ErrorCode.DATABASE_ERROR, "设置考试权限失败");
         }
+        return "考试权限设置成功";
     }
 
-    /**
-     * 删除考试
-     * @param examId 考试ID
-     * @return 删除结果消息
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String deleteExam(Long examId) {
-        Exam exam = examMapper.selectById(examId);
-        if (exam == null) {
-            throw new RuntimeException("考试不存在");
+        requireActiveExam(examId);
+        LambdaQueryWrapper<ExamRecord> q = new LambdaQueryWrapper<>();
+        q.eq(ExamRecord::getExamId, examId)
+                .eq(ExamRecord::getDeleted, 0);
+        Long count = examRecordMapper.selectCount(q);
+        if (count != null && count > 0) {
+            throw new BusinessException(ErrorCode.EXAM_HAS_RECORDS);
         }
-
-        // 检查是否有考试记录
-        LambdaQueryWrapper<ExamRecord> recordQuery = new LambdaQueryWrapper<>();
-        recordQuery.eq(ExamRecord::getExamId, examId);
-        Long recordCount = examRecordMapper.selectCount(recordQuery);
-
-        if (recordCount > 0) {
-            throw new RuntimeException("该考试已有 " + recordCount + " 条考试记录，无法删除");
+        Exam update = new Exam();
+        update.setId(examId);
+        update.setDeleted(1);
+        int updated = examMapper.updateById(update);
+        if (updated <= 0) {
+            throw new BusinessException(ErrorCode.DATABASE_ERROR, "删除考试失败");
         }
-
-        int result = examMapper.deleteById(examId);
-        if (result > 0) {
-            return "考试删除成功";
-        } else {
-            throw new RuntimeException("考试删除失败");
-        }
+        return "删除成功";
     }
 
-    /**
-     * 获取考试列表
-     * @param pageNum 页码
-     * @param pageSize 每页数量
-     * @param keyword 搜索关键词
-     * @param paperId 试卷ID筛选
-     * @param startTime 开始时间筛选
-     * @param endTime 结束时间筛选
-     * @return 分页结果
-     */
     @Override
     public PageResult<Exam> getExamList(Integer pageNum, Integer pageSize, String keyword, Long paperId, LocalDateTime startTime, LocalDateTime endTime) {
-        Page<Exam> page = new Page<>(pageNum, pageSize);
+        int p = pageNum == null || pageNum < 1 ? 1 : pageNum;
+        int s = pageSize == null || pageSize < 1 ? 10 : pageSize;
 
-        LambdaQueryWrapper<Exam> query = new LambdaQueryWrapper<>();
-
-        // 关键词搜索（考试名称）
+        LambdaQueryWrapper<Exam> q = new LambdaQueryWrapper<>();
+        q.eq(Exam::getDeleted, 0);
         if (StringUtils.hasText(keyword)) {
-            query.like(Exam::getName, keyword);
+            q.like(Exam::getName, keyword);
         }
-
-        // 试卷ID筛选
         if (paperId != null) {
-            query.eq(Exam::getPaperId, paperId);
+            q.eq(Exam::getPaperId, paperId);
         }
-
-        // 开始时间筛选（查询此时间之后的考试）
         if (startTime != null) {
-            query.ge(Exam::getStartTime, startTime);
+            q.ge(Exam::getStartTime, startTime);
         }
-
-        // 结束时间筛选（查询此时间之前的考试）
         if (endTime != null) {
-            query.le(Exam::getEndTime, endTime);
+            q.le(Exam::getEndTime, endTime);
         }
+        q.orderByDesc(Exam::getStartTime);
 
-        // 按创建时间倒序排列
-        query.orderByDesc(Exam::getCreatedAt);
-
-        IPage<Exam> pageResult = examMapper.selectPage(page, query);
-
-        return PageResult.of(pageResult.getTotal(), pageNum, pageSize, pageResult.getRecords());
+        Page<Exam> page = new Page<>(p, s);
+        Page<Exam> result = examMapper.selectPage(page, q);
+        return PageResult.of(result.getTotal(), p, s, result.getRecords());
     }
 
-    /**
-     * 获取已发布的考试列表
-     * @param pageNum 页码
-     * @param pageSize 每页数量
-     * @return 分页结果
-     */
     @Override
     public PageResult<Exam> getPublishedExams(Integer pageNum, Integer pageSize) {
-        Page<Exam> page = new Page<>(pageNum, pageSize);
-
+        int p = pageNum == null || pageNum < 1 ? 1 : pageNum;
+        int s = pageSize == null || pageSize < 1 ? 10 : pageSize;
         LocalDateTime now = LocalDateTime.now();
 
-        LambdaQueryWrapper<Exam> query = new LambdaQueryWrapper<>();
-        // 查询当前时间在考试时间范围内的考试（已开始但未结束）
-        query.le(Exam::getStartTime, now)
+        LambdaQueryWrapper<Exam> q = new LambdaQueryWrapper<>();
+        q.eq(Exam::getDeleted, 0)
+                .eq(Exam::getStatus, 1)
+                .le(Exam::getStartTime, now)
                 .ge(Exam::getEndTime, now)
-                .orderByDesc(Exam::getStartTime);
+                .orderByAsc(Exam::getStartTime);
 
-        IPage<Exam> pageResult = examMapper.selectPage(page, query);
-
-        return PageResult.of(pageResult.getTotal(), pageNum, pageSize, pageResult.getRecords());
+        Page<Exam> page = new Page<>(p, s);
+        Page<Exam> result = examMapper.selectPage(page, q);
+        return PageResult.of(result.getTotal(), p, s, result.getRecords());
     }
 
-    /**
-     * 获取我创建的考试列表
-     * @param userId 用户ID
-     * @param pageNum 页码
-     * @param pageSize 每页数量
-     * @return 分页结果
-     */
     @Override
     public PageResult<Exam> getMyExams(Long userId, Integer pageNum, Integer pageSize) {
-        Page<Exam> page = new Page<>(pageNum, pageSize);
+        int p = pageNum == null || pageNum < 1 ? 1 : pageNum;
+        int s = pageSize == null || pageSize < 1 ? 10 : pageSize;
 
-        LambdaQueryWrapper<Exam> query = new LambdaQueryWrapper<>();
-        query.eq(Exam::getCreatedBy, userId)
-                .orderByDesc(Exam::getCreatedAt);
+        LambdaQueryWrapper<Exam> q = new LambdaQueryWrapper<>();
+        q.eq(Exam::getDeleted, 0)
+                .eq(Exam::getCreatedBy, userId)
+                .orderByDesc(Exam::getStartTime);
 
-        IPage<Exam> pageResult = examMapper.selectPage(page, query);
-
-        return PageResult.of(pageResult.getTotal(), pageNum, pageSize, pageResult.getRecords());
+        Page<Exam> page = new Page<>(p, s);
+        Page<Exam> result = examMapper.selectPage(page, q);
+        return PageResult.of(result.getTotal(), p, s, result.getRecords());
     }
 
-    /**
-     * 取消发布考试
-     * @param examId 考试ID
-     * @return 取消结果消息
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String unpublishExam(Long examId) {
-        Exam exam = examMapper.selectById(examId);
-        if (exam == null) {
-            throw new RuntimeException("考试不存在");
+        requireActiveExam(examId);
+        // 取消发布：将结束时间设置为当前时间之前，或直接标记为结束状态2
+        Exam update = new Exam();
+        update.setId(examId);
+        update.setStatus(2);
+        update.setEndTime(LocalDateTime.now().minusMinutes(1));
+        int updated = examMapper.updateById(update);
+        if (updated <= 0) {
+            throw new BusinessException(ErrorCode.DATABASE_ERROR, "取消发布失败");
         }
-
-        // 将考试结束时间设置为当前时间之前，使其不再显示在已发布列表中
-        Exam updateExam = new Exam();
-        updateExam.setId(examId);
-        updateExam.setEndTime(LocalDateTime.now().minusMinutes(1));
-
-        int result = examMapper.updateById(updateExam);
-        if (result > 0) {
-            return "考试已取消发布";
-        } else {
-            throw new RuntimeException("取消发布失败");
-        }
+        return "考试已取消发布";
     }
 
-    /**
-     * 获取考试的统计信息
-     * @param examId 考试ID
-     * @return 统计信息
-     */
     @Override
     public Map<String, Object> getExamStatistics(Long examId) {
-        Exam exam = examMapper.selectById(examId);
-        if (exam == null) {
-            throw new RuntimeException("考试不存在");
-        }
-
-        // 查询考试记录
-        LambdaQueryWrapper<ExamRecord> recordQuery = new LambdaQueryWrapper<>();
-        recordQuery.eq(ExamRecord::getExamId, examId);
-        List<ExamRecord> records = examRecordMapper.selectList(recordQuery);
+        Exam exam = requireActiveExam(examId);
+        LambdaQueryWrapper<ExamRecord> q = new LambdaQueryWrapper<>();
+        q.eq(ExamRecord::getExamId, examId)
+                .eq(ExamRecord::getDeleted, 0);
+        List<ExamRecord> records = examRecordMapper.selectList(q);
 
         Map<String, Object> statistics = new HashMap<>();
         statistics.put("examId", examId);
@@ -398,64 +278,67 @@ public class ExamServiceImpl implements ExamService {
         statistics.put("totalParticipants", records.size());
 
         if (records.isEmpty()) {
-            statistics.put("completedCount", 0);
-            statistics.put("inProgressCount", 0);
-            statistics.put("notStartedCount", 0);
+            statistics.put("completedCount", 0L);
+            statistics.put("inProgressCount", 0L);
+            statistics.put("notStartedCount", 0L);
+            statistics.put("averageScore", 0);
+            statistics.put("highestScore", 0);
+            statistics.put("lowestScore", 0);
+            return statistics;
+        }
+
+        long completedCount = records.stream()
+                .filter(r -> (r.getStatus() != null && r.getStatus() >= 2) || r.getSubmitTime() != null)
+                .count();
+        long inProgressCount = records.stream()
+                .filter(r -> r.getStatus() != null && r.getStatus() == 1 && r.getSubmitTime() == null)
+                .count();
+        long notStartedCount = records.stream()
+                .filter(r -> r.getStartTime() == null)
+                .count();
+
+        statistics.put("completedCount", completedCount);
+        statistics.put("inProgressCount", inProgressCount);
+        statistics.put("notStartedCount", notStartedCount);
+
+        List<ExamRecord> submitted = records.stream()
+                .filter(r -> r.getTotalScore() != null)
+                .toList();
+        if (submitted.isEmpty()) {
             statistics.put("averageScore", 0);
             statistics.put("highestScore", 0);
             statistics.put("lowestScore", 0);
         } else {
-            // 统计已完成、进行中、未开始的考试
-            long completedCount = records.stream()
-                    .filter(r -> "completed".equals(r.getStatus()) || r.getSubmitTime() != null)
-                    .count();
-            long inProgressCount = records.stream()
-                    .filter(r -> "in_progress".equals(r.getStatus()) && r.getSubmitTime() == null)
-                    .count();
-            long notStartedCount = records.stream()
-                    .filter(r -> r.getStartTime() == null)
-                    .count();
-
-            statistics.put("completedCount", completedCount);
-            statistics.put("inProgressCount", inProgressCount);
-            statistics.put("notStartedCount", notStartedCount);
-
-            // 计算平均分、最高分、最低分（只统计已提交的）
-            List<ExamRecord> submittedRecords = records.stream()
-                    .filter(r -> r.getTotalScore() != null)
-                    .collect(Collectors.toList());
-
-            if (!submittedRecords.isEmpty()) {
-                BigDecimal totalScore = submittedRecords.stream()
-                        .map(ExamRecord::getTotalScore)
-                        .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-                BigDecimal averageScore = totalScore.divide(
-                        BigDecimal.valueOf(submittedRecords.size()),
-                        2,
-                        RoundingMode.HALF_UP
-                );
-
-                BigDecimal highestScore = submittedRecords.stream()
-                        .map(ExamRecord::getTotalScore)
-                        .max(BigDecimal::compareTo)
-                        .orElse(BigDecimal.ZERO);
-
-                BigDecimal lowestScore = submittedRecords.stream()
-                        .map(ExamRecord::getTotalScore)
-                        .min(BigDecimal::compareTo)
-                        .orElse(BigDecimal.ZERO);
-
-                statistics.put("averageScore", averageScore.doubleValue());
-                statistics.put("highestScore", highestScore.doubleValue());
-                statistics.put("lowestScore", lowestScore.doubleValue());
-            } else {
-                statistics.put("averageScore", 0);
-                statistics.put("highestScore", 0);
-                statistics.put("lowestScore", 0);
-            }
+            BigDecimal totalScore = submitted.stream()
+                    .map(ExamRecord::getTotalScore)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal average = totalScore
+                    .divide(BigDecimal.valueOf(submitted.size()), 2, java.math.RoundingMode.HALF_UP);
+            BigDecimal highest = submitted.stream()
+                    .map(ExamRecord::getTotalScore)
+                    .max(BigDecimal::compareTo)
+                    .orElse(BigDecimal.ZERO);
+            BigDecimal lowest = submitted.stream()
+                    .map(ExamRecord::getTotalScore)
+                    .min(BigDecimal::compareTo)
+                    .orElse(BigDecimal.ZERO);
+            statistics.put("averageScore", average.doubleValue());
+            statistics.put("highestScore", highest.doubleValue());
+            statistics.put("lowestScore", lowest.doubleValue());
         }
 
         return statistics;
     }
+
+    private Exam requireActiveExam(Long examId) {
+        if (examId == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "考试ID不能为空");
+        }
+        Exam exam = examMapper.selectById(examId);
+        if (exam == null || Objects.equals(exam.getDeleted(), 1)) {
+            throw new BusinessException(ErrorCode.EXAM_NOT_FOUND);
+        }
+        return exam;
+    }
 }
+

@@ -38,7 +38,19 @@ public class ExamRecord {
     private BigDecimal subjectiveScore;
 
     @TableField("status")
-    private String status;
+    private Integer status;
+
+    @TableField("created_by")
+    private Long createdBy;
+
+    @TableField("deleted")
+    private Integer deleted;
+
+    @TableField("created_at")
+    private LocalDateTime createdAt;
+
+    @TableField("updated_at")
+    private LocalDateTime updatedAt;
 }
 
 

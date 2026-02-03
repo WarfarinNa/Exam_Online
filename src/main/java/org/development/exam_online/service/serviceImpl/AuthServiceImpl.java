@@ -7,9 +7,11 @@ import org.development.exam_online.common.exception.ErrorCode;
 import org.development.exam_online.dao.dto.LoginRequest;
 import org.development.exam_online.dao.dto.LoginResponse;
 import org.development.exam_online.dao.dto.RegisterRequest;
-import org.development.exam_online.dao.entity.Role;
+import org.development.exam_online.dao.entity.Permission;
+import org.development.exam_online.dao.entity.RolePermission;
 import org.development.exam_online.dao.entity.User;
-import org.development.exam_online.dao.mapper.RoleMapper;
+import org.development.exam_online.dao.mapper.PermissionMapper;
+import org.development.exam_online.dao.mapper.RolePermissionMapper;
 import org.development.exam_online.dao.mapper.UserMapper;
 import org.development.exam_online.service.AuthService;
 import org.development.exam_online.util.JwtUtils;
@@ -17,140 +19,174 @@ import org.development.exam_online.util.PasswordUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
-/**
- * 认证服务实现类
- */
 @Service
 @RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
 
+    /**
+     * 固定角色ID（按需求写死）
+     */
+    private static final long ROLE_STUDENT = 3L;
+
     private final UserMapper userMapper;
-    private final RoleMapper roleMapper;
+    private final RolePermissionMapper rolePermissionMapper;
+    private final PermissionMapper permissionMapper;
     private final JwtUtils jwtUtils;
 
-    // 学生角色名称常量
-    private static final String STUDENT_ROLE_NAME = "STUDENT";
-
-    /**
-     * 用户注册
-     * @param request 注册请求
-     * @return 注册结果消息
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String register(RegisterRequest request) {
-        // 检查用户名是否已存在
-        LambdaQueryWrapper<User> userQuery = new LambdaQueryWrapper<>();
-        userQuery.eq(User::getUsername, request.getUsername());
-        User existingUser = userMapper.selectOne(userQuery);
-        if (existingUser != null) {
+        if (request == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "注册信息不能为空");
+        }
+
+        // 用户名唯一
+        LambdaQueryWrapper<User> existsQ = new LambdaQueryWrapper<>();
+        existsQ.eq(User::getUsername, request.getUsername())
+                .eq(User::getDeleted, 0);
+        if (userMapper.selectCount(existsQ) > 0) {
             throw new BusinessException(ErrorCode.USERNAME_EXISTS);
         }
 
-        // 检查邮箱是否已存在（如果提供了邮箱）
-        if (request.getEmail() != null && !request.getEmail().isEmpty()) {
-            LambdaQueryWrapper<User> emailQuery = new LambdaQueryWrapper<>();
-            emailQuery.eq(User::getEmail, request.getEmail());
-            User existingEmail = userMapper.selectOne(emailQuery);
-            if (existingEmail != null) {
-                throw new BusinessException(ErrorCode.EMAIL_EXISTS);
-            }
-        }
+        User user = new User();
+        user.setUsername(request.getUsername());
+        user.setPassword(PasswordUtils.hashPassword(request.getPassword()));
+        user.setRealName(request.getRealName());
+        user.setEmail(request.getEmail());
+        user.setPhone(request.getPhone());
+        user.setRoleId(ROLE_STUDENT);
+        user.setDeleted(0);
 
-        // 获取学生角色ID（默认角色）
-        LambdaQueryWrapper<Role> roleQuery = new LambdaQueryWrapper<>();
-        roleQuery.eq(Role::getRoleName, STUDENT_ROLE_NAME);
-        Role studentRole = roleMapper.selectOne(roleQuery);
-        if (studentRole == null) {
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR.getCode(), "系统错误：学生角色不存在");
+        int inserted = userMapper.insert(user);
+        if (inserted <= 0) {
+            throw new BusinessException(ErrorCode.DATABASE_ERROR, "注册失败");
         }
-
-        // 创建新用户
-        User user = User.builder()
-                .username(request.getUsername())
-                .password(PasswordUtils.hashPassword(request.getPassword()))
-                .realName(request.getRealName())
-                .email(request.getEmail())
-                .phone(request.getPhone())
-                .roleId(studentRole.getId())
-                .createdAt(LocalDateTime.now())
-                .updatedAt(LocalDateTime.now())
-                .build();
-
-        int result = userMapper.insert(user);
-        if (result > 0) {
-            return "注册成功";
-        } else {
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR.getCode(), "注册失败");
-        }
+        return "注册成功";
     }
 
-    /**
-     * 用户登录
-     * @param request 登录请求
-     * @return 登录响应（包含token和用户信息）
-     */
     @Override
     public LoginResponse login(LoginRequest request) {
-        // 根据用户名查询用户
-        LambdaQueryWrapper<User> query = new LambdaQueryWrapper<>();
-        query.eq(User::getUsername, request.getUsername());
-        User user = userMapper.selectOne(query);
+        if (request == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "登录信息不能为空");
+        }
 
-        if (user == null) {
+        LambdaQueryWrapper<User> q = new LambdaQueryWrapper<>();
+        q.eq(User::getUsername, request.getUsername())
+                .eq(User::getDeleted, 0)
+                .last("limit 1");
+        User user = userMapper.selectOne(q);
+        if (user == null || !PasswordUtils.matches(request.getPassword(), user.getPassword())) {
             throw new BusinessException(ErrorCode.PASSWORD_ERROR);
         }
 
-        // 验证密码
-        if (!PasswordUtils.matches(request.getPassword(), user.getPassword())) {
-            throw new BusinessException(ErrorCode.PASSWORD_ERROR);
-        }
-
-        // 生成JWT token
         String token = jwtUtils.generateToken(user.getId(), user.getUsername(), user.getRoleId());
 
-        // 脱敏处理：不返回密码
-        User userWithoutPassword = User.builder()
-                .id(user.getId())
-                .username(user.getUsername())
-                .realName(user.getRealName())
-                .email(user.getEmail())
-                .phone(user.getPhone())
-                .roleId(user.getRoleId())
-                .createdAt(user.getCreatedAt())
-                .updatedAt(user.getUpdatedAt())
-                .build();
-
-        // 构建登录响应
+        User safe = sanitizeUser(user);
         return LoginResponse.builder()
                 .token(token)
-                .user(userWithoutPassword)
+                .user(safe)
                 .build();
     }
 
-    /**
-     * 用户登出
-     * @param authorization Authorization header（格式：Bearer {token}或直接为token）
-     * @return 登出结果消息
-     */
     @Override
     public String logout(String authorization) {
-        // 从Authorization header中提取token（格式：Bearer {token}）
-        String token = null;
-        if (authorization != null && !authorization.isEmpty()) {
-            if (authorization.startsWith("Bearer ")) {
-                token = authorization.substring(7);
-            } else {
-                token = authorization;
-            }
+        // JWT 无状态：前端丢弃 token 即可；如需强制失效，可引入 token blacklist/redis
+        return "登出成功";
+    }
+
+    @Override
+    public User me(String authorization) {
+        Long userId = requireUserId(authorization);
+        User user = userMapper.selectById(userId);
+        if (user == null || !Objects.equals(user.getDeleted(), 0)) {
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+        }
+        return sanitizeUser(user);
+    }
+
+    @Override
+    public List<String> myPermissionCodes(String authorization) {
+        Long roleId = requireRoleId(authorization);
+        if (roleId == null) return Collections.emptyList();
+
+        // 固定角色也允许绑定 permission_code（由你自定义）
+        LambdaQueryWrapper<RolePermission> rpQ = new LambdaQueryWrapper<>();
+        rpQ.eq(RolePermission::getRoleId, roleId);
+        List<RolePermission> rps = rolePermissionMapper.selectList(rpQ);
+        if (rps == null || rps.isEmpty()) {
+            return Collections.emptyList();
         }
 
-        // 由于JWT是无状态的，登出操作主要是客户端删除token
-        // 如果需要服务端控制，可以实现token黑名单机制（使用Redis等）
-        // 这里简单返回成功消息
-        return "登出成功";
+        List<Long> permissionIds = rps.stream()
+                .map(RolePermission::getPermissionId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .collect(Collectors.toList());
+        if (permissionIds.isEmpty()) return Collections.emptyList();
+
+        List<Permission> permissions = permissionMapper.selectBatchIds(permissionIds);
+        if (permissions == null || permissions.isEmpty()) return Collections.emptyList();
+
+        return permissions.stream()
+                .filter(p -> p.getDeleted() == null || p.getDeleted() == 0)
+                .map(Permission::getPermissionCode)
+                .filter(Objects::nonNull)
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
+    private Long requireUserId(String authorization) {
+        String token = extractToken(authorization);
+        if (token == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
+        if (!jwtUtils.validateToken(token)) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "Token无效或已过期");
+        }
+        Long userId = jwtUtils.getUserIdFromToken(token);
+        if (userId == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "无法从Token中获取用户信息");
+        }
+        return userId;
+    }
+
+    private Long requireRoleId(String authorization) {
+        String token = extractToken(authorization);
+        if (token == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
+        if (!jwtUtils.validateToken(token)) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "Token无效或已过期");
+        }
+        return jwtUtils.getRoleIdFromToken(token);
+    }
+
+    private static String extractToken(String authorization) {
+        if (authorization == null || authorization.isBlank()) return null;
+        return authorization.startsWith("Bearer ") ? authorization.substring(7) : authorization;
+    }
+
+    private static User sanitizeUser(User user) {
+        if (user == null) return null;
+        User safe = new User();
+        safe.setId(user.getId());
+        safe.setUsername(user.getUsername());
+        safe.setRealName(user.getRealName());
+        safe.setEmail(user.getEmail());
+        safe.setPhone(user.getPhone());
+        safe.setRoleId(user.getRoleId());
+        safe.setCreatedBy(user.getCreatedBy());
+        safe.setDeleted(user.getDeleted());
+        safe.setCreatedAt(user.getCreatedAt());
+        safe.setUpdatedAt(user.getUpdatedAt());
+        // password 不返回
+        safe.setPassword(null);
+        return safe;
     }
 }
 

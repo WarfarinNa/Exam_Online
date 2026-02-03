@@ -2,6 +2,8 @@ package org.development.exam_online.service.serviceImpl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
+import org.development.exam_online.common.exception.BusinessException;
+import org.development.exam_online.common.exception.ErrorCode;
 import org.development.exam_online.dao.entity.Permission;
 import org.development.exam_online.dao.mapper.PermissionMapper;
 import org.development.exam_online.service.PermissionService;
@@ -10,7 +12,9 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 /**
- * 权限服务实现类
+ * 权限服务实现
+ *
+ * <p>权限集合由初始化脚本（如 init_design.sql）预置，默认仅提供查询能力。</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -18,41 +22,38 @@ public class PermissionServiceImpl implements PermissionService {
 
     private final PermissionMapper permissionMapper;
 
-    /**
-     * 获取所有权限列表
-     * @return 权限列表
-     */
     @Override
     public List<Permission> getPermissionList() {
-        return permissionMapper.selectList(null);
+        LambdaQueryWrapper<Permission> q = new LambdaQueryWrapper<>();
+        q.eq(Permission::getDeleted, 0)
+                .orderByAsc(Permission::getId);
+        return permissionMapper.selectList(q);
     }
 
-    /**
-     * 根据ID获取权限详情
-     * @param permissionId 权限ID
-     * @return 权限详情
-     */
     @Override
     public Permission getPermissionById(Long permissionId) {
+        if (permissionId == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "permissionId不能为空");
+        }
         Permission permission = permissionMapper.selectById(permissionId);
-        if (permission == null) {
-            throw new RuntimeException("权限不存在");
+        if (permission == null || (permission.getDeleted() != null && permission.getDeleted() != 0)) {
+            throw new BusinessException(ErrorCode.PERMISSION_NOT_FOUND);
         }
         return permission;
     }
 
-    /**
-     * 根据权限代码获取权限详情
-     * @param permissionCode 权限代码（如：user:manage）
-     * @return 权限详情
-     */
     @Override
     public Permission getPermissionByCode(String permissionCode) {
-        LambdaQueryWrapper<Permission> query = new LambdaQueryWrapper<>();
-        query.eq(Permission::getPermissionCode, permissionCode);
-        Permission permission = permissionMapper.selectOne(query);
+        if (permissionCode == null || permissionCode.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "permissionCode不能为空");
+        }
+        LambdaQueryWrapper<Permission> q = new LambdaQueryWrapper<>();
+        q.eq(Permission::getPermissionCode, permissionCode)
+                .eq(Permission::getDeleted, 0)
+                .last("limit 1");
+        Permission permission = permissionMapper.selectOne(q);
         if (permission == null) {
-            throw new RuntimeException("权限不存在");
+            throw new BusinessException(ErrorCode.PERMISSION_NOT_FOUND);
         }
         return permission;
     }

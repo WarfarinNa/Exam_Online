@@ -22,8 +22,11 @@ public class ExamPaper {
     @TableField("description")
     private String description;
 
-    @TableField("type")
-    private String type;
+    @TableField("build_type")
+    private Integer buildType;
+
+    @TableField("rule_json")
+    private String ruleJson;
 
     @TableField("total_score")
     private BigDecimal totalScore;
@@ -34,8 +37,14 @@ public class ExamPaper {
     @TableField("created_by")
     private Long createdBy;
 
+    @TableField("deleted")
+    private Integer deleted;
+
     @TableField("created_at")
     private LocalDateTime createdAt;
+
+    @TableField("updated_at")
+    private LocalDateTime updatedAt;
 }
 
 

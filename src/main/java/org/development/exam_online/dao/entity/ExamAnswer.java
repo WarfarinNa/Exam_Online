@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 @TableName("exam_answer")
 @Data
@@ -21,11 +22,23 @@ public class ExamAnswer {
     @TableField("question_id")
     private Long questionId;
 
-    @TableField("answer")
-    private String answer;
+    @TableField("user_answer")
+    private String userAnswer;
 
     @TableField("score")
     private BigDecimal score;
+
+    @TableField("created_by")
+    private Long createdBy;
+
+    @TableField("deleted")
+    private Integer deleted;
+
+    @TableField("created_at")
+    private LocalDateTime createdAt;
+
+    @TableField("updated_at")
+    private LocalDateTime updatedAt;
 }
 
 

@@ -3,6 +3,9 @@ package org.development.exam_online.service;
 import org.development.exam_online.dao.dto.LoginRequest;
 import org.development.exam_online.dao.dto.LoginResponse;
 import org.development.exam_online.dao.dto.RegisterRequest;
+import org.development.exam_online.dao.entity.User;
+
+import java.util.List;
 
 /**
  * 认证服务接口
@@ -29,5 +32,19 @@ public interface AuthService {
      * @return 登出结果消息
      */
     String logout(String authorization);
+
+    /**
+     * 获取当前登录用户信息
+     * @param authorization Authorization header
+     * @return 当前用户（已脱敏）
+     */
+    User me(String authorization);
+
+    /**
+     * 获取当前登录用户的权限码列表
+     * @param authorization Authorization header
+     * @return permission_code 列表
+     */
+    List<String> myPermissionCodes(String authorization);
 }
 

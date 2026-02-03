@@ -6,6 +6,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.development.exam_online.common.Result;
 import org.development.exam_online.dao.entity.QuestionCategory;
+import org.development.exam_online.security.RequirePermission;
 import org.development.exam_online.service.QuestionCategoryService;
 import org.springframework.web.bind.annotation.*;
 
@@ -19,6 +20,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/question-categories")
 @RequiredArgsConstructor
+@RequirePermission({"question:manage"})
 public class QuestionCategoryController {
 
     private final QuestionCategoryService questionCategoryService;

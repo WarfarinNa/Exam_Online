@@ -1,27 +1,27 @@
 package org.development.exam_online.service.serviceImpl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import org.development.exam_online.common.PageResult;
+import org.development.exam_online.common.exception.BusinessException;
+import org.development.exam_online.common.exception.ErrorCode;
 import org.development.exam_online.common.enums.QuestionType;
 import org.development.exam_online.dao.entity.Question;
 import org.development.exam_online.dao.entity.QuestionCategory;
 import org.development.exam_online.dao.mapper.QuestionCategoryMapper;
 import org.development.exam_online.dao.mapper.QuestionMapper;
+import org.development.exam_online.security.AuthContext;
 import org.development.exam_online.service.QuestionService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.time.LocalDateTime;
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.Objects;
 
-/**
- * 题目服务实现类
- */
 @Service
 @RequiredArgsConstructor
 public class QuestionServiceImpl implements QuestionService {
@@ -29,292 +29,211 @@ public class QuestionServiceImpl implements QuestionService {
     private final QuestionMapper questionMapper;
     private final QuestionCategoryMapper questionCategoryMapper;
 
-    /**
-     * 创建题目
-     * @param question 题目信息
-     * @return 创建的题目
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Question createQuestion(Question question) {
-        // 验证分类是否存在
-        if (question.getCategoryId() != null) {
-            QuestionCategory category = questionCategoryMapper.selectById(question.getCategoryId());
-            if (category == null) {
-                throw new RuntimeException("题目分类不存在");
+        validateQuestionForCreateOrUpdate(question);
+
+        question.setId(null);
+        question.setDeleted(0);
+        if (question.getCreatedBy() == null) {
+            Long currentUserId = AuthContext.getUserId();
+            if (currentUserId != null) {
+                question.setCreatedBy(currentUserId);
             }
         }
 
-        // 验证题型
-        if (!StringUtils.hasText(question.getType())) {
-            throw new RuntimeException("题型不能为空");
+        int inserted = questionMapper.insert(question);
+        if (inserted <= 0) {
+            throw new BusinessException(ErrorCode.DATABASE_ERROR, "创建题目失败");
         }
-        
-        // 验证题型是否有效
-        try {
-            QuestionType.of(question.getType());
-        } catch (IllegalArgumentException e) {
-            throw new RuntimeException("题型格式错误：" + e.getMessage());
-        }
-
-        // 验证题目内容
-        if (!StringUtils.hasText(question.getContent())) {
-            throw new RuntimeException("题目内容不能为空");
-        }
-
-        // 验证答案
-        if (!StringUtils.hasText(question.getAnswer())) {
-            throw new RuntimeException("题目答案不能为空");
-        }
-
-        // 设置创建时间
-        question.setCreatedAt(LocalDateTime.now());
-
-        int result = questionMapper.insert(question);
-        if (result > 0) {
-            return questionMapper.selectById(question.getId());
-        } else {
-            throw new RuntimeException("创建题目失败");
-        }
+        return questionMapper.selectById(question.getId());
     }
 
-    /**
-     * 根据ID获取题目详情
-     * @param questionId 题目ID
-     * @return 题目详情
-     */
     @Override
     public Question getQuestionById(Long questionId) {
-        Question question = questionMapper.selectById(questionId);
-        if (question == null) {
-            throw new RuntimeException("题目不存在");
-        }
+        Question question = requireActiveQuestion(questionId);
         return question;
     }
 
-    /**
-     * 更新题目
-     * @param questionId 题目ID
-     * @param question 题目信息
-     * @return 更新结果消息
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String updateQuestion(Long questionId, Question question) {
-        Question existingQuestion = questionMapper.selectById(questionId);
-        if (existingQuestion == null) {
-            throw new RuntimeException("题目不存在");
-        }
+        requireActiveQuestion(questionId);
+        validateQuestionForCreateOrUpdate(question);
 
-        // 验证分类是否存在（如果提供了分类ID）
-        if (question.getCategoryId() != null) {
-            QuestionCategory category = questionCategoryMapper.selectById(question.getCategoryId());
-            if (category == null) {
-                throw new RuntimeException("题目分类不存在");
-            }
-        }
-
-        // 验证题型是否有效（如果提供了题型）
-        if (StringUtils.hasText(question.getType())) {
-            try {
-                QuestionType.of(question.getType());
-            } catch (IllegalArgumentException e) {
-                throw new RuntimeException("题型格式错误：" + e.getMessage());
-            }
-        }
-
-        // 设置ID
         question.setId(questionId);
-
-        int result = questionMapper.updateById(question);
-        if (result > 0) {
-            return "题目更新成功";
-        } else {
-            throw new RuntimeException("题目更新失败");
+        int updated = questionMapper.updateById(question);
+        if (updated <= 0) {
+            throw new BusinessException(ErrorCode.DATABASE_ERROR, "更新题目失败");
         }
+        return "更新成功";
     }
 
-    /**
-     * 删除题目
-     * @param questionId 题目ID
-     * @return 删除结果消息
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String deleteQuestion(Long questionId) {
-        Question question = questionMapper.selectById(questionId);
-        if (question == null) {
-            throw new RuntimeException("题目不存在");
+        Question existing = requireActiveQuestion(questionId);
+        Question update = new Question();
+        update.setId(existing.getId());
+        update.setDeleted(1);
+        int updated = questionMapper.updateById(update);
+        if (updated <= 0) {
+            throw new BusinessException(ErrorCode.DATABASE_ERROR, "删除题目失败");
         }
-
-        int result = questionMapper.deleteById(questionId);
-        if (result > 0) {
-            return "题目删除成功";
-        } else {
-            throw new RuntimeException("题目删除失败");
-        }
+        return "删除成功";
     }
 
-    /**
-     * 批量删除题目
-     * @param questionIds 题目ID列表
-     * @return 删除结果消息
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String deleteQuestions(List<Long> questionIds) {
         if (questionIds == null || questionIds.isEmpty()) {
-            throw new RuntimeException("题目ID列表不能为空");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "题目ID列表不能为空");
         }
-
-        int deletedCount = 0;
-        for (Long questionId : questionIds) {
-            int result = questionMapper.deleteById(questionId);
-            if (result > 0) {
-                deletedCount++;
+        for (Long id : questionIds) {
+            if (id != null) {
+                deleteQuestion(id);
             }
         }
-
-        return "成功删除 " + deletedCount + " 个题目";
+        return "批量删除成功";
     }
 
-    /**
-     * 获取题目列表（支持分页和搜索）
-     * @param pageNum 页码
-     * @param pageSize 每页数量
-     * @param type 题型筛选
-     * @param categoryId 分类ID筛选
-     * @param keyword 搜索关键词
-     * @param createdBy 创建者ID筛选
-     * @return 分页结果
-     */
     @Override
     public PageResult<Question> getQuestionList(Integer pageNum, Integer pageSize, String type, Long categoryId, String keyword, Long createdBy) {
-        Page<Question> page = new Page<>(pageNum, pageSize);
+        int p = pageNum == null || pageNum < 1 ? 1 : pageNum;
+        int s = pageSize == null || pageSize < 1 ? 10 : pageSize;
 
-        LambdaQueryWrapper<Question> query = new LambdaQueryWrapper<>();
-
-        // 题型筛选
-        if (StringUtils.hasText(type)) {
-            // 验证题型是否有效
-            if (!QuestionType.isValid(type)) {
-                throw new RuntimeException("题型格式错误：" + type);
-            }
-            query.eq(Question::getType, type);
-        }
-
-        // 分类筛选
-        if (categoryId != null) {
-            query.eq(Question::getCategoryId, categoryId);
-        }
-
-        // 关键词搜索（题目内容）
-        if (StringUtils.hasText(keyword)) {
-            query.like(Question::getContent, keyword);
-        }
-
-        // 创建者筛选
+        LambdaQueryWrapper<Question> q = buildBaseQuery(type, categoryId, keyword);
         if (createdBy != null) {
-            query.eq(Question::getCreatedBy, createdBy);
+            q.eq(Question::getCreatedBy, createdBy);
         }
+        q.orderByDesc(Question::getCreatedAt);
 
-        // 按创建时间倒序排列
-        query.orderByDesc(Question::getCreatedAt);
-
-        IPage<Question> pageResult = questionMapper.selectPage(page, query);
-
-        return PageResult.of(pageResult.getTotal(), pageNum, pageSize, pageResult.getRecords());
+        Page<Question> page = new Page<>(p, s);
+        Page<Question> result = questionMapper.selectPage(page, q);
+        return PageResult.of(result.getTotal(), p, s, result.getRecords());
     }
 
-    /**
-     * 搜索题目
-     * @param keyword 搜索关键词
-     * @param type 题型筛选
-     * @param categoryId 分类ID筛选
-     * @param pageNum 页码
-     * @param pageSize 每页数量
-     * @return 分页结果
-     */
     @Override
     public PageResult<Question> searchQuestions(String keyword, String type, Long categoryId, Integer pageNum, Integer pageSize) {
-        // 搜索功能实际上和getQuestionList类似，可以复用逻辑
-        return getQuestionList(pageNum, pageSize, type, categoryId, keyword, null);
+        int p = pageNum == null || pageNum < 1 ? 1 : pageNum;
+        int s = pageSize == null || pageSize < 1 ? 10 : pageSize;
+
+        LambdaQueryWrapper<Question> q = buildBaseQuery(type, categoryId, keyword);
+        q.orderByDesc(Question::getCreatedAt);
+
+        Page<Question> page = new Page<>(p, s);
+        Page<Question> result = questionMapper.selectPage(page, q);
+        return PageResult.of(result.getTotal(), p, s, result.getRecords());
     }
 
-    /**
-     * 批量导入题目
-     * @param file Excel文件
-     * @return 导入结果消息
-     */
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public String importQuestions(MultipartFile file) {
+        // 这里可以后续扩展为解析 Excel 的真实导入逻辑
         if (file == null || file.isEmpty()) {
-            throw new RuntimeException("文件不能为空");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "上传文件不能为空");
         }
-
-        String originalFilename = file.getOriginalFilename();
-        if (originalFilename == null || (!originalFilename.endsWith(".xlsx") && !originalFilename.endsWith(".xls"))) {
-            throw new RuntimeException("文件格式错误，请上传Excel文件（.xlsx或.xls）");
-        }
-
-        // TODO: 实现Excel解析和批量导入逻辑
-        // 这里可以集成Apache POI或EasyExcel来处理Excel文件
-        // 暂时返回提示信息
-        throw new RuntimeException("批量导入功能暂未实现，请使用创建题目接口逐个添加");
+        // 为避免引入额外依赖，这里暂返回提示信息
+        return "批量导入功能暂未实现，请后续补充 Excel 解析逻辑";
     }
 
-    /**
-     * 导出题目模板
-     * @return 导出结果消息
-     */
     @Override
     public String exportTemplate() {
-        // TODO: 实现Excel模板导出逻辑
-        // 这里可以生成一个包含题目字段的Excel模板文件
-        // 暂时返回提示信息
-        throw new RuntimeException("模板导出功能暂未实现");
+        // 可返回一个前端可用的说明或静态模板地址，这里先返回简单提示
+        return "题目导入模板请参考文档：包含列 type, stem, options_json, answer_json, analysis, score, difficulty, category_id, knowledge_id";
     }
 
-    /**
-     * 根据分类获取题目列表
-     * @param categoryId 分类ID
-     * @param pageNum 页码
-     * @param pageSize 每页数量
-     * @return 分页结果
-     */
     @Override
     public PageResult<Question> getQuestionsByCategory(Long categoryId, Integer pageNum, Integer pageSize) {
-        // 验证分类是否存在
-        QuestionCategory category = questionCategoryMapper.selectById(categoryId);
-        if (category == null) {
-            throw new RuntimeException("题目分类不存在");
+        if (categoryId == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "分类ID不能为空");
         }
+        int p = pageNum == null || pageNum < 1 ? 1 : pageNum;
+        int s = pageSize == null || pageSize < 1 ? 10 : pageSize;
 
-        return getQuestionList(pageNum, pageSize, null, categoryId, null, null);
+        LambdaQueryWrapper<Question> q = new LambdaQueryWrapper<>();
+        q.eq(Question::getDeleted, 0)
+                .eq(Question::getCategoryId, categoryId)
+                .orderByDesc(Question::getCreatedAt);
+
+        Page<Question> page = new Page<>(p, s);
+        Page<Question> result = questionMapper.selectPage(page, q);
+        return PageResult.of(result.getTotal(), p, s, result.getRecords());
     }
 
-    /**
-     * 根据题型获取题目列表
-     * @param type 题型
-     * @param pageNum 页码
-     * @param pageSize 每页数量
-     * @return 分页结果
-     */
     @Override
     public PageResult<Question> getQuestionsByType(String type, Integer pageNum, Integer pageSize) {
-        if (!StringUtils.hasText(type)) {
-            throw new RuntimeException("题型不能为空");
+        if (!StringUtils.hasText(type) || !QuestionType.isValid(type)) {
+            throw new BusinessException(ErrorCode.QUESTION_TYPE_INVALID, "题型代码无效");
         }
+        int p = pageNum == null || pageNum < 1 ? 1 : pageNum;
+        int s = pageSize == null || pageSize < 1 ? 10 : pageSize;
 
-        // 验证题型是否有效
-        try {
-            QuestionType.of(type);
-        } catch (IllegalArgumentException e) {
-            throw new RuntimeException("题型格式错误：" + e.getMessage());
+        LambdaQueryWrapper<Question> q = new LambdaQueryWrapper<>();
+        q.eq(Question::getDeleted, 0)
+                .eq(Question::getType, type)
+                .orderByDesc(Question::getCreatedAt);
+
+        Page<Question> page = new Page<>(p, s);
+        Page<Question> result = questionMapper.selectPage(page, q);
+        return PageResult.of(result.getTotal(), p, s, result.getRecords());
+    }
+
+    private LambdaQueryWrapper<Question> buildBaseQuery(String type, Long categoryId, String keyword) {
+        LambdaQueryWrapper<Question> q = new LambdaQueryWrapper<>();
+        q.eq(Question::getDeleted, 0);
+
+        if (StringUtils.hasText(type)) {
+            if (!QuestionType.isValid(type)) {
+                throw new BusinessException(ErrorCode.QUESTION_TYPE_INVALID, "题型代码无效");
+            }
+            q.eq(Question::getType, type);
         }
+        if (categoryId != null) {
+            q.eq(Question::getCategoryId, categoryId);
+        }
+        if (StringUtils.hasText(keyword)) {
+            q.like(Question::getStem, keyword);
+        }
+        return q;
+    }
 
-        return getQuestionList(pageNum, pageSize, type, null, null, null);
+    private void validateQuestionForCreateOrUpdate(Question question) {
+        if (question == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "题目信息不能为空");
+        }
+        if (!StringUtils.hasText(question.getType()) || !QuestionType.isValid(question.getType())) {
+            throw new BusinessException(ErrorCode.QUESTION_TYPE_INVALID, "题型代码无效");
+        }
+        if (!StringUtils.hasText(question.getStem())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "题干不能为空");
+        }
+        BigDecimal score = question.getScore();
+        if (score == null || score.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "分值必须大于0");
+        }
+        Integer difficulty = question.getDifficulty();
+        if (difficulty == null || difficulty < 1 || difficulty > 3) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "难度必须为1-3");
+        }
+        if (question.getCategoryId() != null) {
+            QuestionCategory category = questionCategoryMapper.selectById(question.getCategoryId());
+            if (category == null || !Objects.equals(category.getDeleted(), 0)) {
+                throw new BusinessException(ErrorCode.QUESTION_CATEGORY_NOT_FOUND);
+            }
+        }
+        // optionsJson / answerJson 格式校验可以后续扩展（如根据题型做 JSON 结构校验）
+    }
+
+    private Question requireActiveQuestion(Long questionId) {
+        if (questionId == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "题目ID不能为空");
+        }
+        Question question = questionMapper.selectById(questionId);
+        if (question == null || !Objects.equals(question.getDeleted(), 0)) {
+            throw new BusinessException(ErrorCode.QUESTION_NOT_FOUND);
+        }
+        return question;
     }
 }
 

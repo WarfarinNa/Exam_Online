@@ -8,6 +8,7 @@ import org.development.exam_online.common.PageResult;
 import org.development.exam_online.common.Result;
 import org.development.exam_online.dao.dto.AutoGeneratePaperRule;
 import org.development.exam_online.dao.entity.ExamPaper;
+import org.development.exam_online.security.RequirePermission;
 import org.development.exam_online.service.ExamPaperService;
 import org.springframework.web.bind.annotation.*;
 
@@ -22,6 +23,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/exam-papers")
 @RequiredArgsConstructor
+@RequirePermission({"paper:manage"})
 public class ExamPaperController {
 
     private final ExamPaperService examPaperService;

@@ -4,33 +4,22 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
 import lombok.Data;
-import lombok.EqualsAndHashCode;
-import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
-@TableName("permission")
+@TableName("question_knowledge")
 @Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-@EqualsAndHashCode
-public class Permission {
+public class QuestionKnowledge {
 
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
 
-    @TableField("permission_name")
-    private String permissionName;
+    @TableField("category_id")
+    private Long categoryId;
 
-    @TableField("permission_code")
-    private String permissionCode;
-
-    @TableField("description")
-    private String description;
+    @TableField("name")
+    private String name;
 
     @TableField("created_by")
     private Long createdBy;
@@ -43,7 +32,5 @@ public class Permission {
 
     @TableField("updated_at")
     private LocalDateTime updatedAt;
-
 }
-
 

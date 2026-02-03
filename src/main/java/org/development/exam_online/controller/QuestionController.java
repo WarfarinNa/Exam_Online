@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.development.exam_online.common.PageResult;
 import org.development.exam_online.common.Result;
 import org.development.exam_online.dao.entity.Question;
+import org.development.exam_online.security.RequirePermission;
 import org.development.exam_online.service.QuestionService;
 import org.development.exam_online.util.QuestionTypeUtil;
 import org.springframework.web.bind.annotation.*;
@@ -23,6 +24,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/questions")
 @RequiredArgsConstructor
+@RequirePermission({"question:manage"})
 public class QuestionController {
 
     private final QuestionService questionService;

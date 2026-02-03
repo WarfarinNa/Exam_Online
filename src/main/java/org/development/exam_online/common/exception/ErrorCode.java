@@ -39,6 +39,16 @@ public enum ErrorCode {
 
     EXAM_NOT_FOUND(1309, "考试不存在"),
     EXAM_HAS_RECORDS(1310, "该考试已有考试记录，无法删除"),
+    EXAM_NOT_STARTED(1311, "考试尚未开始"),
+    EXAM_ENDED(1312, "考试已结束"),
+    EXAM_ALREADY_STARTED(1313, "您已经开始了本次考试"),
+    EXAM_NOT_STARTED_BY_USER(1314, "您尚未开始本次考试"),
+    EXAM_ALREADY_SUBMITTED(1315, "考试已提交，无法再次提交"),
+    EXAM_TIME_EXPIRED(1316, "考试时间已到"),
+    EXAM_PERMISSION_DENIED(1317, "您无权限参加本次考试"),
+    EXAM_RECORD_NOT_FOUND(1318, "考试记录不存在"),
+    EXAM_ANSWER_NOT_FOUND(1319, "答案记录不存在"),
+    EXAM_DURATION_INVALID(1320, "考试时长无效"),
 
     AUTO_GENERATE_RULE_EMPTY(1401, "自动组卷规则不能为空"),
     AUTO_GENERATE_TYPE_RULES_EMPTY(1402, "题型规则不能为空"),
@@ -47,6 +57,13 @@ public enum ErrorCode {
     AUTO_GENERATE_DIFFICULTY_NOT_ENOUGH(1405, "难度 {0} 的题目数量不足，需要 {1} 道，但只有 {2} 道"),
     AUTO_GENERATE_DIFFICULTY_RULE_INVALID(1406, "难度规则无效"),
     AUTO_GENERATE_DIFFICULTY_RATIO_INVALID(1407, "难度比例总和必须接近1.0"),
+
+    // 判卷与成绩分析错误码 1500-1599
+    EXAM_RECORD_NOT_SUBMITTED(1501, "考试记录尚未提交，无法判卷"),
+    EXAM_RECORD_ALREADY_GRADED(1502, "该考试记录已经判卷完成"),
+    SUBJECTIVE_QUESTION_SCORE_INVALID(1503, "主观题分值无效"),
+    SUBJECTIVE_QUESTION_SCORE_EXCEED(1504, "主观题分值不能超过题目满分"),
+    GRADING_PERMISSION_DENIED(1505, "无权限进行判卷操作"),
 
     // 系统错误码 5000-5999
     INTERNAL_ERROR(5000, "系统内部错误"),

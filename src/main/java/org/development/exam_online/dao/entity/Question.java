@@ -19,30 +19,41 @@ public class Question {
     @TableField("type")
     private String type;
 
-    @TableField("content")
-    private String content;
+    @TableField("stem")
+    private String stem;
 
-    // JSON 字段，按需在全局或字段级别配置类型处理器
-    @TableField("options")
-    private String options;
+    @TableField("options_json")
+    private String optionsJson;
 
-    @TableField("answer")
-    private String answer;
+    @TableField("answer_json")
+    private String answerJson;
+
+    @TableField("analysis")
+    private String analysis;
 
     @TableField("score")
     private BigDecimal score;
 
+    @TableField("difficulty")
+    private Integer difficulty;
+
     @TableField("category_id")
     private Long categoryId;
+
+    @TableField("knowledge_id")
+    private Long knowledgeId;
 
     @TableField("created_by")
     private Long createdBy;
 
+    @TableField("deleted")
+    private Integer deleted;
+
     @TableField("created_at")
     private LocalDateTime createdAt;
-    //1.简单 2.普通 3.困难
-    @TableField("difficulty")
-    private Integer difficulty;
+
+    @TableField("updated_at")
+    private LocalDateTime updatedAt;
 
 }
 
