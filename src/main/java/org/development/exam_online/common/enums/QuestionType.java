@@ -24,11 +24,6 @@ public enum QuestionType {
         this.label = label;
     }
 
-    /**
-     * 根据代码获取枚举
-     * @param code 题型代码
-     * @return 题目类型枚举
-     */
     public static QuestionType of(String code) {
         if (code == null || code.isEmpty()) {
             return null;
@@ -41,11 +36,6 @@ public enum QuestionType {
         throw new IllegalArgumentException("非法题型：" + code);
     }
 
-    /**
-     * 验证题型代码是否有效
-     * @param code 题型代码
-     * @return 是否有效
-     */
     public static boolean isValid(String code) {
         if (code == null || code.isEmpty()) {
             return false;
@@ -58,24 +48,5 @@ public enum QuestionType {
         return false;
     }
 
-    /**
-     * 获取所有题型代码列表
-     * @return 题型代码数组
-     */
-    public static String[] getAllCodes() {
-        return Arrays.stream(values())
-                .map(QuestionType::getCode)
-                .toArray(String[]::new);
-    }
-
-    /**
-     * 获取所有题型标签列表
-     * @return 题型标签数组
-     */
-    public static String[] getAllLabels() {
-        return Arrays.stream(values())
-                .map(QuestionType::getLabel)
-                .toArray(String[]::new);
-    }
 }
 
