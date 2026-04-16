@@ -1,0 +1,17 @@
+
+spring:
+  mail:
+    host: smtp.qq.com
+    port: 587
+    username: 2959907107@qq.com
+    password: vaznprqmeggtdddi
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          ssl:
+            trust: smtp.qq.com
+    default-encoding: UTF-8
