@@ -25,5 +25,3 @@ public class RolePermission {
     private Long permissionId;
 
 }
-
-

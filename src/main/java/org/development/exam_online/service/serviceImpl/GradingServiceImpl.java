@@ -4,11 +4,13 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import org.development.exam_online.common.PageResult;
+import org.development.exam_online.common.constants.ExamRecordStatus;
 import org.development.exam_online.common.exception.BusinessException;
 import org.development.exam_online.common.exception.ErrorCode;
 import org.development.exam_online.common.enums.QuestionType;
 import org.development.exam_online.dao.entity.*;
 import org.development.exam_online.dao.mapper.*;
+import org.development.exam_online.service.AnalysisService;
 import org.development.exam_online.service.GradingService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -25,9 +28,31 @@ public class GradingServiceImpl implements GradingService {
     private final ExamMapper examMapper;
     private final ExamRecordMapper examRecordMapper;
     private final ExamPaperMapper examPaperMapper;
-    private final ExamPaperQuestionMapper examPaperQuestionMapper;
+    private final ExamPaperQuestionSnapshotMapper snapshotMapper;
     private final QuestionMapper questionMapper;
     private final ExamAnswerMapper examAnswerMapper;
+    private final UserMapper userMapper;
+    private final AnalysisService analysisService;
+    private final AiAnalysisReportMapper aiAnalysisReportMapper;
+    private final ExamCheatLogMapper examCheatLogMapper;
+
+    private static final ThreadPoolExecutor AI_REPORT_EXECUTOR = new ThreadPoolExecutor(
+            2,
+            10,
+            60L,
+            TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(100),
+            new ThreadFactory() {
+                private final java.util.concurrent.atomic.AtomicInteger threadNumber = new java.util.concurrent.atomic.AtomicInteger(1);
+                @Override
+                public Thread newThread(Runnable r) {
+                    Thread t = new Thread(r, "ai-report-" + threadNumber.getAndIncrement());
+                    t.setDaemon(false);
+                    return t;
+                }
+            },
+            new ThreadPoolExecutor.CallerRunsPolicy()
+    );
 
     @Override
     public PageResult<Map<String, Object>> getPendingGradingRecords(Long examId, Long page, Long size) {
@@ -36,7 +61,9 @@ public class GradingServiceImpl implements GradingService {
 
         LambdaQueryWrapper<ExamRecord> q = new LambdaQueryWrapper<>();
         q.eq(ExamRecord::getDeleted, 0)
-                .eq(ExamRecord::getStatus, 2); // 已提交，待评分
+                .in(ExamRecord::getStatus, 
+                    ExamRecordStatus.SUBMITTED_UNGRADED, 
+                    ExamRecordStatus.SUBMITTED_GRADING); // 待评分或评分中
         if (examId != null) {
             q.eq(ExamRecord::getExamId, examId);
         }
@@ -67,6 +94,9 @@ public class GradingServiceImpl implements GradingService {
             m.put("startTime", r.getStartTime());
             m.put("submitTime", r.getSubmitTime());
             m.put("status", r.getStatus());
+            m.put("statusDesc", ExamRecordStatus.getDescription(r.getStatus()));
+            m.put("studentView", ExamRecordStatus.getStudentView(r.getStatus()));
+            m.put("teacherView", ExamRecordStatus.getTeacherView(r.getStatus()));
             m.put("objectiveScore", r.getObjectiveScore());
             m.put("subjectiveScore", r.getSubjectiveScore());
             m.put("totalScore", r.getTotalScore());
@@ -81,16 +111,16 @@ public class GradingServiceImpl implements GradingService {
         Exam exam = requireExam(record.getExamId());
         ExamPaper paper = requirePaper(exam.getPaperId());
 
-        List<ExamPaperQuestion> epqs = getPaperQuestions(paper.getId());
+        List<ExamPaperQuestionSnapshot> snapshots = getSnapshotQuestions(exam.getId());
         Map<Long, ExamAnswer> answerMap = getAnswerMap(recordId);
 
-        List<Long> qIds = epqs.stream().map(ExamPaperQuestion::getQuestionId).toList();
-        Map<Long, Question> questionMap = questionMapper.selectBatchIds(qIds).stream()
+        List<Long> qIds = snapshots.stream().map(ExamPaperQuestionSnapshot::getQuestionId).toList();
+        Map<Long, Question> questionMap = questionMapper.selectBatchIdsIgnoreDeleted(qIds).stream()
                 .collect(Collectors.toMap(Question::getId, q -> q));
 
         List<Map<String, Object>> questionViews = new ArrayList<>();
-        for (ExamPaperQuestion epq : epqs) {
-            Question q = questionMap.get(epq.getQuestionId());
+        for (ExamPaperQuestionSnapshot snap : snapshots) {
+            Question q = questionMap.get(snap.getQuestionId());
             if (q == null) continue;
             ExamAnswer ans = answerMap.get(q.getId());
 
@@ -100,7 +130,7 @@ public class GradingServiceImpl implements GradingService {
                     || QuestionType.JUDGE.getCode().equals(type)
                     || QuestionType.BLANK.getCode().equals(type);
 
-            BigDecimal fullScore = epq.getQuestionScore() != null ? epq.getQuestionScore() : q.getScore();
+            BigDecimal fullScore = snap.getQuestionScore() != null ? snap.getQuestionScore() : q.getScore();
             Map<String, Object> m = new HashMap<>();
             m.put("questionId", q.getId());
             m.put("type", type);
@@ -109,11 +139,32 @@ public class GradingServiceImpl implements GradingService {
             m.put("answerJson", q.getAnswerJson());
             m.put("userAnswer", ans != null ? ans.getUserAnswer() : null);
             m.put("score", ans != null ? ans.getScore() : null);
+            m.put("isManualGraded", ans != null ? ans.getIsManualGraded() : null);
             m.put("fullScore", fullScore);
             m.put("difficulty", q.getDifficulty());
-            m.put("order", epq.getQuestionOrder());
+            m.put("order", snap.getQuestionOrder());
             m.put("objective", isObjective);
             questionViews.add(m);
+        }
+
+        // 查询切屏记录
+        LambdaQueryWrapper<ExamCheatLog> cheatQuery = new LambdaQueryWrapper<>();
+        cheatQuery.eq(ExamCheatLog::getExamId, exam.getId())
+                .eq(ExamCheatLog::getUserId, record.getUserId())
+                .eq(ExamCheatLog::getDeleted, 0)
+                .orderByDesc(ExamCheatLog::getCount);
+        List<ExamCheatLog> cheatLogs = examCheatLogMapper.selectList(cheatQuery);
+        
+        // 转换切屏记录为前端格式
+        List<Map<String, Object>> cheatLogViews = new ArrayList<>();
+        int totalCheatCount = 0;
+        for (ExamCheatLog log : cheatLogs) {
+            Map<String, Object> logView = new HashMap<>();
+            logView.put("cheatType", log.getCheatType());
+            logView.put("count", log.getCount());
+            logView.put("lastTime", log.getLastTime());
+            cheatLogViews.add(logView);
+            totalCheatCount += log.getCount();
         }
 
         Map<String, Object> result = new HashMap<>();
@@ -121,6 +172,8 @@ public class GradingServiceImpl implements GradingService {
         result.put("record", record);
         result.put("paper", paper);
         result.put("questions", questionViews);
+        result.put("cheatLogs", cheatLogViews);
+        result.put("totalCheatCount", totalCheatCount);
         return result;
     }
 
@@ -131,15 +184,21 @@ public class GradingServiceImpl implements GradingService {
             throw new BusinessException(ErrorCode.SUBJECTIVE_QUESTION_SCORE_INVALID);
         }
         ExamRecord record = requireRecord(recordId);
+        
+        // 检查考试记录状态，状态5（已结束/已评分）不允许修改
+        if (record.getStatus() != null && record.getStatus() == ExamRecordStatus.FINISHED) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "成绩已确认，不允许修改评分");
+        }
+        
         Exam exam = requireExam(record.getExamId());
         ExamPaper paper = requirePaper(exam.getPaperId());
 
-        // 获取试卷问题和题目
-        List<ExamPaperQuestion> epqs = getPaperQuestions(paper.getId());
-        Map<Long, ExamPaperQuestion> epqMap = epqs.stream()
-                .collect(Collectors.toMap(ExamPaperQuestion::getQuestionId, e -> e));
-        ExamPaperQuestion epq = epqMap.get(questionId);
-        if (epq == null) {
+        // 从快照获取题目列表
+        List<ExamPaperQuestionSnapshot> snapshots = getSnapshotQuestions(exam.getId());
+        Map<Long, ExamPaperQuestionSnapshot> snapMap = snapshots.stream()
+                .collect(Collectors.toMap(ExamPaperQuestionSnapshot::getQuestionId, e -> e));
+        ExamPaperQuestionSnapshot snap = snapMap.get(questionId);
+        if (snap == null) {
             throw new BusinessException(ErrorCode.EXAM_PAPER_QUESTION_NOT_FOUND);
         }
 
@@ -147,24 +206,18 @@ public class GradingServiceImpl implements GradingService {
         if (question == null) {
             throw new BusinessException(ErrorCode.QUESTION_NOT_FOUND);
         }
-        String type = question.getType();
-        boolean isObjective = QuestionType.SINGLE.getCode().equals(type)
-                || QuestionType.MULTIPLE.getCode().equals(type)
-                || QuestionType.JUDGE.getCode().equals(type)
-                || QuestionType.BLANK.getCode().equals(type);
-        if (isObjective) {
-            throw new BusinessException(ErrorCode.SUBJECTIVE_QUESTION_SCORE_INVALID, "客观题无需人工评分");
-        }
 
-        BigDecimal fullScore = epq.getQuestionScore() != null ? epq.getQuestionScore() : question.getScore();
+        // 允许教师对任何题目（包括客观题）进行手动评分，以覆盖自动判分结果
+        BigDecimal fullScore = snap.getQuestionScore() != null ? snap.getQuestionScore() : question.getScore();
         if (fullScore == null) fullScore = BigDecimal.ZERO;
         if (score.compareTo(fullScore) > 0) {
             throw new BusinessException(ErrorCode.SUBJECTIVE_QUESTION_SCORE_EXCEED);
         }
 
-        // 更新答案得分
+        // 更新答案得分，并标记为人工评分
         ExamAnswer answer = getOrCreateAnswer(recordId, questionId);
         answer.setScore(score);
+        answer.setIsManualGraded(1); // 标记为人工评分
         examAnswerMapper.updateById(answer);
 
         // 重新汇总主观题得分与总分
@@ -181,50 +234,78 @@ public class GradingServiceImpl implements GradingService {
     }
 
     @Override
+        @Transactional(rollbackFor = Exception.class)
+        public void autoGradeRecord(Long recordId) {
+            autoGradeRecord(recordId, false);
+        }
+
+    @Override
     @Transactional(rollbackFor = Exception.class)
-    public void autoGradeRecord(Long recordId) {
-        ExamRecord record = requireRecord(recordId);
-        Exam exam = requireExam(record.getExamId());
-        ExamPaper paper = requirePaper(exam.getPaperId());
-        List<ExamPaperQuestion> epqs = getPaperQuestions(paper.getId());
-        Map<Long, ExamAnswer> answerMap = getAnswerMap(recordId);
-
-        List<Long> qIds = epqs.stream().map(ExamPaperQuestion::getQuestionId).toList();
-        Map<Long, Question> questionMap = questionMapper.selectBatchIds(qIds).stream()
-                .collect(Collectors.toMap(Question::getId, q -> q));
-
-        BigDecimal objectiveScore = BigDecimal.ZERO;
-        for (ExamPaperQuestion epq : epqs) {
-            Question q = questionMap.get(epq.getQuestionId());
-            if (q == null) continue;
-            String type = q.getType();
-            boolean isObjective = QuestionType.SINGLE.getCode().equals(type)
-                    || QuestionType.MULTIPLE.getCode().equals(type)
-                    || QuestionType.JUDGE.getCode().equals(type)
-                    || QuestionType.BLANK.getCode().equals(type);
-            if (!isObjective) continue;
-
-            ExamAnswer ans = answerMap.get(q.getId());
-            if (ans == null) continue;
-
-            BigDecimal fullScore = epq.getQuestionScore() != null ? epq.getQuestionScore() : q.getScore();
-            if (fullScore == null) fullScore = BigDecimal.ZERO;
-            if (Objects.equals(q.getAnswerJson(), ans.getUserAnswer())) {
-                ans.setScore(fullScore);
-                objectiveScore = objectiveScore.add(fullScore);
-            } else {
-                ans.setScore(BigDecimal.ZERO);
+    public void autoGradeRecord(Long recordId, boolean forceOverride) {
+            ExamRecord record = requireRecord(recordId);
+            
+            // 检查考试记录状态，状态5（已结束/已评分）不允许修改
+            if (record.getStatus() != null && record.getStatus() == ExamRecordStatus.FINISHED) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "成绩已确认，不允许重新判分");
             }
-            examAnswerMapper.updateById(ans);
+            
+            Exam exam = requireExam(record.getExamId());
+            ExamPaper paper = requirePaper(exam.getPaperId());
+            List<ExamPaperQuestionSnapshot> snapshots = getSnapshotQuestions(exam.getId());
+            Map<Long, ExamAnswer> answerMap = getAnswerMap(recordId);
+
+            List<Long> qIds = snapshots.stream().map(ExamPaperQuestionSnapshot::getQuestionId).toList();
+            Map<Long, Question> questionMap = questionMapper.selectBatchIdsIgnoreDeleted(qIds).stream()
+                    .collect(Collectors.toMap(Question::getId, q -> q));
+
+            BigDecimal objectiveScore = BigDecimal.ZERO;
+            for (ExamPaperQuestionSnapshot snap : snapshots) {
+                Question q = questionMap.get(snap.getQuestionId());
+                if (q == null) continue;
+                String type = q.getType();
+                boolean isObjective = QuestionType.SINGLE.getCode().equals(type)
+                        || QuestionType.MULTIPLE.getCode().equals(type)
+                        || QuestionType.JUDGE.getCode().equals(type)
+                        || QuestionType.BLANK.getCode().equals(type);
+                if (!isObjective) continue;
+
+                ExamAnswer ans = answerMap.get(q.getId());
+                if (ans == null) continue;
+
+                // 如果不强制覆盖，跳过已人工评分的题目
+                if (!forceOverride && ans.getIsManualGraded() != null && ans.getIsManualGraded() == 1) {
+                    // 已人工评分的题目，累加其分数但不重新判分
+                    if (ans.getScore() != null) {
+                        objectiveScore = objectiveScore.add(ans.getScore());
+                    }
+                    continue;
+                }
+
+                BigDecimal fullScore = snap.getQuestionScore() != null ? snap.getQuestionScore() : q.getScore();
+                if (fullScore == null) fullScore = BigDecimal.ZERO;
+
+                // 标准化答案：去除首尾空格后比较
+                String correctAnswer = normalizeAnswer(q.getAnswerJson());
+                String userAnswer = normalizeAnswer(ans.getUserAnswer());
+
+                if (Objects.equals(correctAnswer, userAnswer)) {
+                    ans.setScore(fullScore);
+                    objectiveScore = objectiveScore.add(fullScore);
+                } else {
+                    ans.setScore(BigDecimal.ZERO);
+                }
+                ans.setIsManualGraded(0); // 标记为自动判分
+                examAnswerMapper.updateById(ans);
+            }
+
+            record.setObjectiveScore(objectiveScore);
+            if (record.getSubjectiveScore() == null) {
+                record.setSubjectiveScore(BigDecimal.ZERO);
+            }
+            record.setTotalScore(objectiveScore.add(record.getSubjectiveScore()));
+            examRecordMapper.updateById(record);
         }
 
-        record.setObjectiveScore(objectiveScore);
-        if (record.getSubjectiveScore() == null) {
-            record.setSubjectiveScore(BigDecimal.ZERO);
-        }
-        record.setTotalScore(objectiveScore.add(record.getSubjectiveScore()));
-        examRecordMapper.updateById(record);
-    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -275,7 +356,7 @@ public class GradingServiceImpl implements GradingService {
                 .filter(r -> r.getTotalScore() != null)
                 .count();
         long inProgressCount = records.stream()
-                .filter(r -> r.getStatus() != null && r.getStatus() == 1)
+                .filter(r -> ExamRecordStatus.isInProgress(r.getStatus()))
                 .count();
         long notStartedCount = records.stream()
                 .filter(r -> r.getStartTime() == null)
@@ -328,13 +409,12 @@ public class GradingServiceImpl implements GradingService {
     @Override
     public List<Map<String, Object>> getWrongQuestionAnalysis(Long examId) {
         Exam exam = requireExam(examId);
-        ExamPaper paper = requirePaper(exam.getPaperId());
-        List<ExamPaperQuestion> epqs = getPaperQuestions(paper.getId());
+        List<ExamPaperQuestionSnapshot> snapshots = getSnapshotQuestions(examId);
 
-        if (epqs.isEmpty()) return Collections.emptyList();
+        if (snapshots.isEmpty()) return Collections.emptyList();
 
-        List<Long> qIds = epqs.stream().map(ExamPaperQuestion::getQuestionId).toList();
-        Map<Long, Question> questionMap = questionMapper.selectBatchIds(qIds).stream()
+        List<Long> qIds = snapshots.stream().map(ExamPaperQuestionSnapshot::getQuestionId).toList();
+        Map<Long, Question> questionMap = questionMapper.selectBatchIdsIgnoreDeleted(qIds).stream()
                 .collect(Collectors.toMap(Question::getId, q -> q));
 
         // 仅统计客观题
@@ -435,9 +515,20 @@ public class GradingServiceImpl implements GradingService {
             m.put("startTime", r.getStartTime());
             m.put("submitTime", r.getSubmitTime());
             m.put("status", r.getStatus());
-            m.put("objectiveScore", r.getObjectiveScore());
-            m.put("subjectiveScore", r.getSubjectiveScore());
-            m.put("totalScore", r.getTotalScore());
+            m.put("statusDesc", ExamRecordStatus.getDescription(r.getStatus()));
+            m.put("studentView", ExamRecordStatus.getStudentView(r.getStatus()));
+            m.put("teacherView", ExamRecordStatus.getTeacherView(r.getStatus()));
+            
+            // 只有状态为5（已结束/已评分）时才显示分数，否则隐藏
+            if (r.getStatus() != null && r.getStatus() == ExamRecordStatus.FINISHED) {
+                m.put("objectiveScore", r.getObjectiveScore());
+                m.put("subjectiveScore", r.getSubjectiveScore());
+                m.put("totalScore", r.getTotalScore());
+            } else {
+                m.put("objectiveScore", null);
+                m.put("subjectiveScore", null);
+                m.put("totalScore", null);
+            }
             views.add(m);
         }
         return PageResult.of(recordsPage.getTotal(), p, s, views);
@@ -449,42 +540,83 @@ public class GradingServiceImpl implements GradingService {
         if (!Objects.equals(record.getUserId(), userId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN);
         }
+        
+        // 只有状态为5（已结束/已评分）时才能查看成绩和答案详情
+        boolean canViewGrades = record.getStatus() != null && record.getStatus() == ExamRecordStatus.FINISHED;
+        
         Exam exam = requireExam(record.getExamId());
         ExamPaper paper = requirePaper(exam.getPaperId());
 
-        List<ExamPaperQuestion> epqs = getPaperQuestions(paper.getId());
+        List<ExamPaperQuestionSnapshot> snapshots = getSnapshotQuestions(exam.getId());
         Map<Long, ExamAnswer> answerMap = getAnswerMap(recordId);
 
-        List<Long> qIds = epqs.stream().map(ExamPaperQuestion::getQuestionId).toList();
-        Map<Long, Question> questionMap = questionMapper.selectBatchIds(qIds).stream()
+        List<Long> qIds = snapshots.stream().map(ExamPaperQuestionSnapshot::getQuestionId).toList();
+        Map<Long, Question> questionMap = questionMapper.selectBatchIdsIgnoreDeleted(qIds).stream()
                 .collect(Collectors.toMap(Question::getId, q -> q));
 
         List<Map<String, Object>> questionViews = new ArrayList<>();
-        for (ExamPaperQuestion epq : epqs) {
-            Question q = questionMap.get(epq.getQuestionId());
+        for (ExamPaperQuestionSnapshot snap : snapshots) {
+            Question q = questionMap.get(snap.getQuestionId());
             if (q == null) continue;
             ExamAnswer ans = answerMap.get(q.getId());
 
-            BigDecimal fullScore = epq.getQuestionScore() != null ? epq.getQuestionScore() : q.getScore();
+            BigDecimal fullScore = snap.getQuestionScore() != null ? snap.getQuestionScore() : q.getScore();
             Map<String, Object> m = new HashMap<>();
             m.put("questionId", q.getId());
             m.put("type", q.getType());
             m.put("stem", q.getStem());
             m.put("optionsJson", q.getOptionsJson());
-            m.put("answerJson", q.getAnswerJson());
-            m.put("userAnswer", ans != null ? ans.getUserAnswer() : null);
-            m.put("score", ans != null ? ans.getScore() : null);
+            
+            // 只有成绩已发布时才显示正确答案、学生答案和得分
+            if (canViewGrades) {
+                m.put("answerJson", q.getAnswerJson());
+                m.put("userAnswer", ans != null ? ans.getUserAnswer() : null);
+                m.put("score", ans != null ? ans.getScore() : null);
+            } else {
+                m.put("answerJson", null);
+                m.put("userAnswer", ans != null ? ans.getUserAnswer() : null);
+                m.put("score", null);
+            }
+            
             m.put("fullScore", fullScore);
             m.put("difficulty", q.getDifficulty());
-            m.put("order", epq.getQuestionOrder());
+            m.put("order", snap.getQuestionOrder());
             questionViews.add(m);
         }
 
         Map<String, Object> result = new HashMap<>();
         result.put("exam", exam);
-        result.put("record", record);
+        
+        // 只有成绩已发布时才显示分数信息
+        if (canViewGrades) {
+            result.put("record", record);
+        } else {
+            // 隐藏分数字段
+            ExamRecord recordCopy = new ExamRecord();
+            recordCopy.setId(record.getId());
+            recordCopy.setExamId(record.getExamId());
+            recordCopy.setUserId(record.getUserId());
+            recordCopy.setStartTime(record.getStartTime());
+            recordCopy.setSubmitTime(record.getSubmitTime());
+            recordCopy.setStatus(record.getStatus());
+            recordCopy.setObjectiveScore(null);
+            recordCopy.setSubjectiveScore(null);
+            recordCopy.setTotalScore(null);
+            result.put("record", recordCopy);
+        }
+        
         result.put("paper", paper);
         result.put("questions", questionViews);
+        result.put("canViewGrades", canViewGrades);
+        
+        // 如果成绩已发布，添加AI分析报告
+        if (canViewGrades) {
+            Map<String, Object> aiReport = getExamRecordAiReport(recordId);
+            result.put("aiReport", aiReport);
+        } else {
+            result.put("aiReport", null);
+        }
+        
         return result;
     }
 
@@ -521,11 +653,11 @@ public class GradingServiceImpl implements GradingService {
         return record;
     }
 
-    private List<ExamPaperQuestion> getPaperQuestions(Long paperId) {
-        LambdaQueryWrapper<ExamPaperQuestion> q = new LambdaQueryWrapper<>();
-        q.eq(ExamPaperQuestion::getPaperId, paperId)
-                .orderByAsc(ExamPaperQuestion::getQuestionOrder);
-        return examPaperQuestionMapper.selectList(q);
+    private List<ExamPaperQuestionSnapshot> getSnapshotQuestions(Long examId) {
+        LambdaQueryWrapper<ExamPaperQuestionSnapshot> q = new LambdaQueryWrapper<>();
+        q.eq(ExamPaperQuestionSnapshot::getExamId, examId)
+                .orderByAsc(ExamPaperQuestionSnapshot::getQuestionOrder);
+        return snapshotMapper.selectList(q);
     }
 
     private Map<Long, ExamAnswer> getAnswerMap(Long recordId) {
@@ -538,26 +670,54 @@ public class GradingServiceImpl implements GradingService {
     }
 
     private ExamAnswer getOrCreateAnswer(Long recordId, Long questionId) {
-        LambdaQueryWrapper<ExamAnswer> q = new LambdaQueryWrapper<>();
-        q.eq(ExamAnswer::getRecordId, recordId)
-                .eq(ExamAnswer::getQuestionId, questionId)
-                .eq(ExamAnswer::getDeleted, 0);
-        ExamAnswer ans = examAnswerMapper.selectOne(q);
+        // 使用自定义方法查询，忽略逻辑删除状态
+        ExamAnswer ans = examAnswerMapper.selectByRecordAndQuestionIgnoreDeleted(recordId, questionId);
+        
         if (ans == null) {
-            ans = new ExamAnswer();
-            ans.setRecordId(recordId);
-            ans.setQuestionId(questionId);
+            // 确实不存在，创建新记录
+            try {
+                ans = new ExamAnswer();
+                ans.setRecordId(recordId);
+                ans.setQuestionId(questionId);
+                ans.setDeleted(0);
+                ans.setIsManualGraded(0);
+                examAnswerMapper.insert(ans);
+            } catch (Exception e) {
+                // 如果插入失败（并发导致的唯一索引冲突），再次查询
+                if (e.getMessage() != null && e.getMessage().contains("Duplicate entry")) {
+                    ans = examAnswerMapper.selectByRecordAndQuestionIgnoreDeleted(recordId, questionId);
+                    if (ans == null) {
+                        throw e;
+                    }
+                } else {
+                    throw e;
+                }
+            }
+        }
+        
+        // 如果记录是逻辑删除状态，恢复它
+        if (ans != null && ans.getDeleted() != null && ans.getDeleted() == 1) {
+            com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ExamAnswer> uw =
+                    new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<>();
+            uw.eq(ExamAnswer::getId, ans.getId())
+              .set(ExamAnswer::getDeleted, 0)
+              .set(ExamAnswer::getIsManualGraded, 0)
+              .set(ExamAnswer::getUserAnswer, null)
+              .set(ExamAnswer::getScore, null);
+            examAnswerMapper.update(null, uw);
             ans.setDeleted(0);
-            examAnswerMapper.insert(ans);
+            ans.setIsManualGraded(0);
+            ans.setUserAnswer(null);
+            ans.setScore(null);
         }
         return ans;
     }
 
     private void recalcRecordScores(Long recordId, Exam exam, ExamPaper paper) {
         ExamRecord record = requireRecord(recordId);
-        List<ExamPaperQuestion> epqs = getPaperQuestions(paper.getId());
-        List<Long> qIds = epqs.stream().map(ExamPaperQuestion::getQuestionId).toList();
-        Map<Long, Question> qMap = questionMapper.selectBatchIds(qIds).stream()
+        List<ExamPaperQuestionSnapshot> snapshots = getSnapshotQuestions(exam.getId());
+        List<Long> qIds = snapshots.stream().map(ExamPaperQuestionSnapshot::getQuestionId).toList();
+        Map<Long, Question> qMap = questionMapper.selectBatchIdsIgnoreDeleted(qIds).stream()
                 .collect(Collectors.toMap(Question::getId, q -> q));
 
         Map<Long, ExamAnswer> ansMap = getAnswerMap(recordId);
@@ -565,8 +725,8 @@ public class GradingServiceImpl implements GradingService {
         BigDecimal subjectiveScore = BigDecimal.ZERO;
         BigDecimal objectiveScore = BigDecimal.ZERO;
 
-        for (ExamPaperQuestion epq : epqs) {
-            Question q = qMap.get(epq.getQuestionId());
+        for (ExamPaperQuestionSnapshot snap : snapshots) {
+            Question q = qMap.get(snap.getQuestionId());
             if (q == null) continue;
             ExamAnswer ans = ansMap.get(q.getId());
             if (ans == null || ans.getScore() == null) continue;
@@ -586,9 +746,158 @@ public class GradingServiceImpl implements GradingService {
         record.setObjectiveScore(objectiveScore);
         record.setSubjectiveScore(subjectiveScore);
         record.setTotalScore(objectiveScore.add(subjectiveScore));
-        // 已经完成判卷
-        record.setStatus(3);
+        // 教师完成全部评分
+        record.setStatus(ExamRecordStatus.SUBMITTED_GRADED);
         examRecordMapper.updateById(record);
     }
-}
 
+
+    @Override
+    public Map<String, Object> getRecordScoreInfo(Long recordId) {
+        ExamRecord record = requireRecord(recordId);
+        Map<String, Object> result = new HashMap<>();
+        result.put("objectiveScore", record.getObjectiveScore());
+        result.put("subjectiveScore", record.getSubjectiveScore());
+        result.put("totalScore", record.getTotalScore());
+
+        // 从快照计算试卷总分，避免试卷修改后影响已有记录
+        Exam exam = requireExam(record.getExamId());
+        List<ExamPaperQuestionSnapshot> snapshots = getSnapshotQuestions(exam.getId());
+        BigDecimal snapshotTotalScore = snapshots.stream()
+                .map(s -> s.getQuestionScore() != null ? s.getQuestionScore() : BigDecimal.ZERO)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        result.put("fullScore", snapshotTotalScore);
+
+        return result;
+    }
+
+    @Override
+    public List<Map<String, Object>> getExamRecords(Long examId) {
+        requireExam(examId);
+        
+        LambdaQueryWrapper<ExamRecord> q = new LambdaQueryWrapper<>();
+        q.eq(ExamRecord::getExamId, examId)
+         .orderByDesc(ExamRecord::getSubmitTime);
+        List<ExamRecord> records = examRecordMapper.selectList(q);
+        
+        if (records.isEmpty()) {
+            return Collections.emptyList();
+        }
+        
+        // 获取学生信息
+        List<Long> userIds = records.stream()
+                .map(ExamRecord::getUserId)
+                .distinct()
+                .toList();
+        Map<Long, User> userMap = userMapper.selectBatchIds(userIds).stream()
+                .collect(Collectors.toMap(User::getId, u -> u));
+        
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (ExamRecord record : records) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("recordId", record.getId());
+            item.put("userId", record.getUserId());
+            User user = userMap.get(record.getUserId());
+            item.put("studentName", user != null ? user.getRealName() : "未知");
+            item.put("status", record.getStatus());
+            item.put("statusDesc", ExamRecordStatus.getDescription(record.getStatus()));
+            item.put("studentView", ExamRecordStatus.getStudentView(record.getStatus()));
+            item.put("teacherView", ExamRecordStatus.getTeacherView(record.getStatus()));
+            item.put("submitTime", record.getSubmitTime());
+            item.put("totalScore", record.getTotalScore());
+            item.put("objectiveScore", record.getObjectiveScore());
+            item.put("subjectiveScore", record.getSubjectiveScore());
+            result.add(item);
+        }
+        
+        return result;
+    }
+
+    private String normalizeAnswer(String answer) {
+        return answer == null ? null : answer.trim();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void confirmGrading(Long recordId) {
+        ExamRecord record = requireRecord(recordId);
+        if (!ExamRecordStatus.isGraded(record.getStatus())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, 
+                "只有已评分的记录才能确认，当前状态：" + ExamRecordStatus.getDescription(record.getStatus()));
+        }
+        if (record.getStatus() == ExamRecordStatus.FINISHED) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "该记录已确认评分，无需重复操作");
+        }
+        record.setStatus(ExamRecordStatus.FINISHED);
+        examRecordMapper.updateById(record);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public int confirmExamGrading(Long examId) {
+        requireExam(examId);
+        LambdaQueryWrapper<ExamRecord> q = new LambdaQueryWrapper<>();
+        q.eq(ExamRecord::getExamId, examId)
+                .eq(ExamRecord::getStatus, ExamRecordStatus.SUBMITTED_GRADED)
+                .eq(ExamRecord::getDeleted, 0);
+        List<ExamRecord> records = examRecordMapper.selectList(q);
+
+        List<Long> userIds = new ArrayList<>();
+
+        for (ExamRecord record : records) {
+            record.setStatus(ExamRecordStatus.FINISHED);
+            examRecordMapper.updateById(record);
+            userIds.add(record.getUserId());
+        }
+
+        // 异步生成AI分析报告
+        if (!userIds.isEmpty()) {
+            generateReportsAsync(examId, userIds);
+        }
+
+        return records.size();
+    }
+
+    private void generateReportsAsync(Long examId, List<Long> userIds) {
+        for (Long userId : userIds) {
+            AI_REPORT_EXECUTOR.execute(() -> {
+                try {
+                    analysisService.generateExamReport(userId, examId);
+                } catch (Exception e) {
+                    // 系统错误报告
+                    System.err.println("为学生 " + userId + " 生成考试 " + examId + " 的AI报告失败: " + e.getMessage());
+                }
+            });
+        }
+    }
+
+    @Override
+    public Map<String, Object> getExamRecordAiReport(Long recordId) {
+        ExamRecord record = requireRecord(recordId);
+        
+        // 查询该学生该考试的AI分析报告
+        LambdaQueryWrapper<AiAnalysisReport> q = new LambdaQueryWrapper<>();
+        q.eq(AiAnalysisReport::getUserId, record.getUserId())
+         .eq(AiAnalysisReport::getExamIds, String.valueOf(record.getExamId()))
+         .eq(AiAnalysisReport::getReportType, "single_exam")
+         .eq(AiAnalysisReport::getDeleted, 0)
+         .orderByDesc(AiAnalysisReport::getCreatedTime)
+         .last("LIMIT 1");
+        
+        List<AiAnalysisReport> reports = aiAnalysisReportMapper.selectList(q);
+        if (reports.isEmpty()) {
+            return null;
+        }
+        
+        AiAnalysisReport report = reports.get(0);
+        Map<String, Object> result = new HashMap<>();
+        result.put("reportId", report.getId());
+        result.put("aiReport", report.getAiReport());
+        result.put("modelName", report.getModelName());
+        result.put("createdTime", report.getCreatedTime());
+        result.put("generationTime", report.getGenerationTime());
+        
+        return result;
+    }
+
+}

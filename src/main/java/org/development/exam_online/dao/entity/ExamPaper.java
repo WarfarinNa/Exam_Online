@@ -46,5 +46,3 @@ public class ExamPaper {
     @TableField("updated_at")
     private LocalDateTime updatedAt;
 }
-
-

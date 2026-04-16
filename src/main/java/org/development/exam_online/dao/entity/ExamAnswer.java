@@ -28,6 +28,9 @@ public class ExamAnswer {
     @TableField("score")
     private BigDecimal score;
 
+    @TableField("is_manual_graded")
+    private Integer isManualGraded;
+
     @TableField("created_by")
     private Long createdBy;
 
@@ -40,5 +43,3 @@ public class ExamAnswer {
     @TableField("updated_at")
     private LocalDateTime updatedAt;
 }
-
-

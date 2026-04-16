@@ -33,5 +33,3 @@ public class QuestionCategory {
     @TableField("updated_at")
     private LocalDateTime updatedAt;
 }
-
-

@@ -22,5 +22,3 @@ public class ExamPaperQuestion {
     @TableField("question_order")
     private Integer questionOrder;
 }
-
-

@@ -12,10 +12,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * JWT工具类
- * 用于生成和解析JWT token
- */
+
 @Component
 public class JwtUtils {
 
@@ -23,15 +20,9 @@ public class JwtUtils {
     private String secret;
 
     @Value("${jwt.expiration:86400000}")
-    private Long expiration; // 默认24小时，单位：毫秒
+    private Long expiration;
 
-    /**
-     * 生成JWT token
-     * @param userId 用户ID
-     * @param username 用户名
-     * @param roleId 角色ID
-     * @return JWT token
-     */
+
     public String generateToken(Long userId, String username, Long roleId) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("userId", userId);
@@ -40,11 +31,6 @@ public class JwtUtils {
         return generateToken(claims);
     }
 
-    /**
-     * 生成JWT token
-     * @param claims 载荷信息
-     * @return JWT token
-     */
     private String generateToken(Map<String, Object> claims) {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + expiration);
@@ -59,11 +45,7 @@ public class JwtUtils {
                 .compact();
     }
 
-    /**
-     * 从token中获取Claims
-     * @param token JWT token
-     * @return Claims
-     */
+
     public Claims getClaimsFromToken(String token) {
         try {
             SecretKey key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
@@ -77,11 +59,7 @@ public class JwtUtils {
         }
     }
 
-    /**
-     * 从token中获取用户ID
-     * @param token JWT token
-     * @return 用户ID
-     */
+
     public Long getUserIdFromToken(String token) {
         Claims claims = getClaimsFromToken(token);
         if (claims != null) {
@@ -95,21 +73,7 @@ public class JwtUtils {
         return null;
     }
 
-    /**
-     * 从token中获取用户名
-     * @param token JWT token
-     * @return 用户名
-     */
-    public String getUsernameFromToken(String token) {
-        Claims claims = getClaimsFromToken(token);
-        return claims != null ? (String) claims.get("username") : null;
-    }
 
-    /**
-     * 从token中获取角色ID
-     * @param token JWT token
-     * @return 角色ID
-     */
     public Long getRoleIdFromToken(String token) {
         Claims claims = getClaimsFromToken(token);
         if (claims != null) {
@@ -123,11 +87,6 @@ public class JwtUtils {
         return null;
     }
 
-    /**
-     * 验证token是否有效
-     * @param token JWT token
-     * @return 是否有效
-     */
     public boolean validateToken(String token) {
         try {
             Claims claims = getClaimsFromToken(token);
@@ -137,11 +96,6 @@ public class JwtUtils {
         }
     }
 
-    /**
-     * 检查token是否过期
-     * @param claims Claims
-     * @return 是否过期
-     */
     private boolean isTokenExpired(Claims claims) {
         Date expiration = claims.getExpiration();
         return expiration.before(new Date());

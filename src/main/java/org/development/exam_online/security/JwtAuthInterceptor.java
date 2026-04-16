@@ -13,9 +13,6 @@ import org.springframework.web.servlet.HandlerInterceptor;
 import java.util.Arrays;
 import java.util.Set;
 
-/**
- * JWT 鉴权拦截器：解析 token，写入 AuthContext，并支持 @RequireRole 校验。
- */
 @Component
 @RequiredArgsConstructor
 public class JwtAuthInterceptor implements HandlerInterceptor {
@@ -25,7 +22,7 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        // 非 controller 方法直接放行
+        // 放行非controller方法
         if (!(handler instanceof HandlerMethod handlerMethod)) {
             return true;
         }
@@ -44,11 +41,11 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
 
         AuthContext.set(userId, roleId);
 
-        // 解析权限码并写入上下文
+        // 根据roleId获取所有权限码
         Set<String> permissionCodes = permissionResolver.resolvePermissionCodesByRoleId(roleId);
         AuthContext.setPermissionCodes(permissionCodes);
 
-        // 角色校验：方法注解优先，其次类注解
+        // 废弃-角色
         RequireRole requireRole = handlerMethod.getMethodAnnotation(RequireRole.class);
         if (requireRole == null) {
             requireRole = handlerMethod.getBeanType().getAnnotation(RequireRole.class);
@@ -60,7 +57,7 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
             }
         }
 
-        // 权限码校验：方法注解优先，其次类注解（满足任意一个即可）
+        // 权限码
         RequirePermission requirePermission = handlerMethod.getMethodAnnotation(RequirePermission.class);
         if (requirePermission == null) {
             requirePermission = handlerMethod.getBeanType().getAnnotation(RequirePermission.class);

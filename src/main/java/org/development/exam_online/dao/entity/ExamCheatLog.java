@@ -42,5 +42,3 @@ public class ExamCheatLog {
     @TableField("updated_at")
     private LocalDateTime updatedAt;
 }
-
-

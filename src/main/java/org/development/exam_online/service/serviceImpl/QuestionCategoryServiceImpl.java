@@ -92,19 +92,35 @@ public class QuestionCategoryServiceImpl implements QuestionCategoryService {
     public String deleteCategory(Long categoryId) {
         QuestionCategory existing = requireActiveCategory(categoryId);
 
-        Long count = getQuestionCountByCategory(existing.getId());
-        if (count != null && count > 0) {
-            throw new BusinessException(ErrorCode.QUESTION_CATEGORY_HAS_QUESTIONS);
+        // 级联逻辑删除该分类下的所有题目
+        LambdaQueryWrapper<Question> questionQuery = new LambdaQueryWrapper<>();
+        questionQuery.eq(Question::getCategoryId, categoryId)
+                .eq(Question::getDeleted, 0);
+        List<Question> questions = questionMapper.selectList(questionQuery);
+        
+        if (questions != null && !questions.isEmpty()) {
+            // 批量逻辑删除题目
+            com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Question> updateWrapper =
+                    new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<>();
+            updateWrapper.eq(Question::getCategoryId, categoryId)
+                    .eq(Question::getDeleted, 0)
+                    .set(Question::getDeleted, 1);
+            questionMapper.update(null, updateWrapper);
         }
 
-        QuestionCategory update = new QuestionCategory();
-        update.setId(existing.getId());
-        update.setDeleted(1);
-        int updated = questionCategoryMapper.updateById(update);
+        // 逻辑删除分类
+        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<QuestionCategory> categoryWrapper =
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<>();
+        categoryWrapper.eq(QuestionCategory::getId, categoryId)
+                .set(QuestionCategory::getDeleted, 1);
+        int updated = questionCategoryMapper.update(null, categoryWrapper);
+        
         if (updated <= 0) {
             throw new BusinessException(ErrorCode.DATABASE_ERROR, "删除分类失败");
         }
-        return "删除成功";
+        
+        int deletedQuestionCount = questions != null ? questions.size() : 0;
+        return "删除成功，已级联删除 " + deletedQuestionCount + " 道题目";
     }
 
     @Override

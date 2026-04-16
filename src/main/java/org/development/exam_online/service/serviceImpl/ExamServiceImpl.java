@@ -1,11 +1,13 @@
 package org.development.exam_online.service.serviceImpl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.development.exam_online.common.PageResult;
+import org.development.exam_online.common.constants.ExamRecordStatus;
 import org.development.exam_online.common.exception.BusinessException;
 import org.development.exam_online.common.exception.ErrorCode;
 import org.development.exam_online.dao.entity.Exam;
@@ -13,6 +15,7 @@ import org.development.exam_online.dao.entity.ExamPaper;
 import org.development.exam_online.dao.entity.ExamRecord;
 import org.development.exam_online.dao.mapper.ExamMapper;
 import org.development.exam_online.dao.mapper.ExamPaperMapper;
+import org.development.exam_online.dao.mapper.ExamPaperQuestionSnapshotMapper;
 import org.development.exam_online.dao.mapper.ExamRecordMapper;
 import org.development.exam_online.security.AuthContext;
 import org.development.exam_online.service.ExamService;
@@ -22,10 +25,8 @@ import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -34,6 +35,7 @@ public class ExamServiceImpl implements ExamService {
     private final ExamMapper examMapper;
     private final ExamPaperMapper examPaperMapper;
     private final ExamRecordMapper examRecordMapper;
+    private final ExamPaperQuestionSnapshotMapper snapshotMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
@@ -65,6 +67,8 @@ public class ExamServiceImpl implements ExamService {
         if (inserted <= 0) {
             throw new BusinessException(ErrorCode.DATABASE_ERROR, "创建考试失败");
         }
+        // 生成试卷题目快照，冻结当前试卷内容
+        snapshotMapper.createSnapshotFromPaper(exam.getId(), exam.getPaperId());
         return examMapper.selectById(exam.getId());
     }
 
@@ -108,6 +112,8 @@ public class ExamServiceImpl implements ExamService {
         if (inserted <= 0) {
             throw new BusinessException(ErrorCode.DATABASE_ERROR, "发布考试失败");
         }
+        // 生成试卷题目快照，冻结当前试卷内容
+        snapshotMapper.createSnapshotFromPaper(exam.getId(), paperId);
         return examMapper.selectById(exam.getId());
     }
 
@@ -179,10 +185,11 @@ public class ExamServiceImpl implements ExamService {
         if (count != null && count > 0) {
             throw new BusinessException(ErrorCode.EXAM_HAS_RECORDS);
         }
-        Exam update = new Exam();
-        update.setId(examId);
-        update.setDeleted(1);
-        int updated = examMapper.updateById(update);
+        // 使用更新条件明确设置 deleted=1，避免生成缺少 SET 子句的 SQL
+        LambdaUpdateWrapper<Exam> uw = new LambdaUpdateWrapper<>();
+        uw.eq(Exam::getId, examId)
+          .set(Exam::getDeleted, 1);
+        int updated = examMapper.update(null, uw);
         if (updated <= 0) {
             throw new BusinessException(ErrorCode.DATABASE_ERROR, "删除考试失败");
         }
@@ -234,18 +241,69 @@ public class ExamServiceImpl implements ExamService {
     }
 
     @Override
-    public PageResult<Exam> getMyExams(Long userId, Integer pageNum, Integer pageSize) {
+    public PageResult<Map<String, Object>> getMyExams(Long userId, Integer pageNum, Integer pageSize, String keyword) {
         int p = pageNum == null || pageNum < 1 ? 1 : pageNum;
         int s = pageSize == null || pageSize < 1 ? 10 : pageSize;
 
         LambdaQueryWrapper<Exam> q = new LambdaQueryWrapper<>();
         q.eq(Exam::getDeleted, 0)
-                .eq(Exam::getCreatedBy, userId)
-                .orderByDesc(Exam::getStartTime);
+                .eq(Exam::getCreatedBy, userId);
+        
+        if (StringUtils.hasText(keyword)) {
+            q.like(Exam::getName, keyword);
+        }
+        
+        q.orderByDesc(Exam::getStartTime);
 
         Page<Exam> page = new Page<>(p, s);
         Page<Exam> result = examMapper.selectPage(page, q);
-        return PageResult.of(result.getTotal(), p, s, result.getRecords());
+        
+        List<Exam> exams = result.getRecords();
+        List<Map<String, Object>> examViews = new ArrayList<>();
+        
+        if (!exams.isEmpty()) {
+            // 批量获取试卷信息
+            List<Long> paperIds = exams.stream()
+                    .map(Exam::getPaperId)
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .toList();
+            
+            Map<Long, ExamPaper> paperMap = new HashMap<>();
+            if (!paperIds.isEmpty()) {
+                paperMap = examPaperMapper.selectBatchIds(paperIds).stream()
+                        .collect(Collectors.toMap(ExamPaper::getId, p1 -> p1));
+            }
+            
+            // 构建返回数据
+            for (Exam exam : exams) {
+                Map<String, Object> examView = new HashMap<>();
+                examView.put("id", exam.getId());
+                examView.put("paperId", exam.getPaperId());
+                examView.put("name", exam.getName());
+                examView.put("startTime", exam.getStartTime());
+                examView.put("endTime", exam.getEndTime());
+                examView.put("allowRoles", exam.getAllowRoles());
+                examView.put("status", exam.getStatus());
+                examView.put("createdBy", exam.getCreatedBy());
+                examView.put("createdAt", exam.getCreatedAt());
+                examView.put("updatedAt", exam.getUpdatedAt());
+                
+                // 添加试卷时长
+                ExamPaper paper = paperMap.get(exam.getPaperId());
+                if (paper != null) {
+                    examView.put("duration", paper.getDuration());  // 试卷时长（分钟）
+                    examView.put("paperName", paper.getName());  // 试卷名称
+                } else {
+                    examView.put("duration", null);
+                    examView.put("paperName", null);
+                }
+                
+                examViews.add(examView);
+            }
+        }
+        
+        return PageResult.of(result.getTotal(), p, s, examViews);
     }
 
     @Override
@@ -288,10 +346,10 @@ public class ExamServiceImpl implements ExamService {
         }
 
         long completedCount = records.stream()
-                .filter(r -> (r.getStatus() != null && r.getStatus() >= 2) || r.getSubmitTime() != null)
+                .filter(r -> ExamRecordStatus.isSubmitted(r.getStatus()) || r.getSubmitTime() != null)
                 .count();
         long inProgressCount = records.stream()
-                .filter(r -> r.getStatus() != null && r.getStatus() == 1 && r.getSubmitTime() == null)
+                .filter(r -> ExamRecordStatus.isInProgress(r.getStatus()) && r.getSubmitTime() == null)
                 .count();
         long notStartedCount = records.stream()
                 .filter(r -> r.getStartTime() == null)

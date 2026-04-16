@@ -124,11 +124,14 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String deleteUser(Long userId) {
-        User user = requireActiveUser(userId);
-        User update = new User();
-        update.setId(user.getId());
-        update.setDeleted(1);
-        int updated = userMapper.updateById(update);
+        requireActiveUser(userId);
+
+        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<User> updateWrapper =
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<>();
+        updateWrapper.eq(User::getId, userId)
+                .set(User::getDeleted, 1);
+        int updated = userMapper.update(null, updateWrapper);
+        
         if (updated <= 0) {
             throw new BusinessException(ErrorCode.DATABASE_ERROR, "删除失败");
         }

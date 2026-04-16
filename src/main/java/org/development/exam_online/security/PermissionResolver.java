@@ -14,9 +14,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/**
- * 根据角色ID解析权限码集合
- */
 @Component
 @RequiredArgsConstructor
 public class PermissionResolver {

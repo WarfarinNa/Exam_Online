@@ -52,5 +52,3 @@ public class ExamRecord {
     @TableField("updated_at")
     private LocalDateTime updatedAt;
 }
-
-

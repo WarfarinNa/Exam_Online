@@ -11,5 +11,3 @@ public class ChangePasswordRequest {
     @NotBlank(message = "新密码不能为空")
     private String newPassword;
 }
-
-

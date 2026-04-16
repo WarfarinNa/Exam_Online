@@ -125,23 +125,35 @@ public class QuestionKnowledgeServiceImpl implements QuestionKnowledgeService {
     public String deleteKnowledge(Long id) {
         QuestionKnowledge existing = requireActiveKnowledge(id);
 
-        // 检查是否有题目引用该知识点
-        LambdaQueryWrapper<Question> q = new LambdaQueryWrapper<>();
-        q.eq(Question::getDeleted, 0)
-                .eq(Question::getKnowledgeId, existing.getId());
-        Long count = questionMapper.selectCount(q);
-        if (count != null && count > 0) {
-            throw new BusinessException(ErrorCode.CONFLICT.getCode(), "该知识点下存在题目，无法删除");
+        // 级联逻辑删除该知识点下的所有题目
+        LambdaQueryWrapper<Question> questionQuery = new LambdaQueryWrapper<>();
+        questionQuery.eq(Question::getKnowledgeId, id)
+                .eq(Question::getDeleted, 0);
+        List<Question> questions = questionMapper.selectList(questionQuery);
+        
+        if (questions != null && !questions.isEmpty()) {
+            // 批量逻辑删除题目
+            com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Question> updateWrapper =
+                    new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<>();
+            updateWrapper.eq(Question::getKnowledgeId, id)
+                    .eq(Question::getDeleted, 0)
+                    .set(Question::getDeleted, 1);
+            questionMapper.update(null, updateWrapper);
         }
 
-        QuestionKnowledge update = new QuestionKnowledge();
-        update.setId(existing.getId());
-        update.setDeleted(1);
-        int updated = questionKnowledgeMapper.updateById(update);
+        // 逻辑删除知识点
+        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<QuestionKnowledge> knowledgeWrapper =
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<>();
+        knowledgeWrapper.eq(QuestionKnowledge::getId, id)
+                .set(QuestionKnowledge::getDeleted, 1);
+        int updated = questionKnowledgeMapper.update(null, knowledgeWrapper);
+        
         if (updated <= 0) {
             throw new BusinessException(ErrorCode.DATABASE_ERROR, "删除知识点失败");
         }
-        return "删除成功";
+        
+        int deletedQuestionCount = questions != null ? questions.size() : 0;
+        return "删除成功，已级联删除 " + deletedQuestionCount + " 道题目";
     }
 
     private QuestionKnowledge requireActiveKnowledge(Long id) {

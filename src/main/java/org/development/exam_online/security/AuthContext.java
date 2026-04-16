@@ -1,8 +1,5 @@
 package org.development.exam_online.security;
 
-/**
- * 当前请求的认证上下文（基于 ThreadLocal）
- */
 public final class AuthContext {
 
     private static final ThreadLocal<Long> USER_ID = new ThreadLocal<>();

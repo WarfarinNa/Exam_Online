@@ -33,4 +33,3 @@ public class QuestionKnowledge {
     @TableField("updated_at")
     private LocalDateTime updatedAt;
 }
-

@@ -27,7 +27,6 @@ public class Exam {
     @TableField("end_time")
     private LocalDateTime endTime;
 
-    // JSON 或逗号分隔字符串
     @TableField("allow_roles")
     private String allowRoles;
 
@@ -46,5 +45,3 @@ public class Exam {
     @TableField("updated_at")
     private LocalDateTime updatedAt;
 }
-
-
