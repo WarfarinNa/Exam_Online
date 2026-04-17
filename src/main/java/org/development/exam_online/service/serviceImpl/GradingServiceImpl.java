@@ -3,6 +3,7 @@ package org.development.exam_online.service.serviceImpl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.development.exam_online.common.PageResult;
 import org.development.exam_online.common.constants.ExamRecordStatus;
 import org.development.exam_online.common.exception.BusinessException;
@@ -670,11 +671,9 @@ public class GradingServiceImpl implements GradingService {
     }
 
     private ExamAnswer getOrCreateAnswer(Long recordId, Long questionId) {
-        // 使用自定义方法查询，忽略逻辑删除状态
         ExamAnswer ans = examAnswerMapper.selectByRecordAndQuestionIgnoreDeleted(recordId, questionId);
         
         if (ans == null) {
-            // 确实不存在，创建新记录
             try {
                 ans = new ExamAnswer();
                 ans.setRecordId(recordId);
@@ -683,19 +682,22 @@ public class GradingServiceImpl implements GradingService {
                 ans.setIsManualGraded(0);
                 examAnswerMapper.insert(ans);
             } catch (Exception e) {
-                // 如果插入失败（并发导致的唯一索引冲突），再次查询
                 if (e.getMessage() != null && e.getMessage().contains("Duplicate entry")) {
+                    //不抛出异常
                     ans = examAnswerMapper.selectByRecordAndQuestionIgnoreDeleted(recordId, questionId);
                     if (ans == null) {
-                        throw e;
+                        ans = new ExamAnswer();
+                        ans.setRecordId(recordId);
+                        ans.setQuestionId(questionId);
+                        ans.setDeleted(0);
+                        ans.setIsManualGraded(0);
                     }
                 } else {
                     throw e;
                 }
             }
         }
-        
-        // 如果记录是逻辑删除状态，恢复它
+
         if (ans != null && ans.getDeleted() != null && ans.getDeleted() == 1) {
             com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ExamAnswer> uw =
                     new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<>();

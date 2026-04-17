@@ -10,9 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.Random;
 
-/**
- * 邮件服务实现类
- */
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
