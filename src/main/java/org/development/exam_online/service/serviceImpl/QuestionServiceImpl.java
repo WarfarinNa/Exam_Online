@@ -84,8 +84,7 @@ public class QuestionServiceImpl implements QuestionService {
     @Transactional(rollbackFor = Exception.class)
     public String deleteQuestion(Long questionId) {
         requireActiveQuestion(questionId);
-        
-        // 使用 LambdaUpdateWrapper 避免空 SET 子句问题
+
         com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Question> updateWrapper =
                 new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<>();
         updateWrapper.eq(Question::getId, questionId)

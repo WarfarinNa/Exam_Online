@@ -99,7 +99,6 @@ public class ExamServiceImpl implements ExamService {
         // 发布状态 1
         exam.setStatus(1);
         if (exam.getStartTime() == null || exam.getEndTime() == null) {
-            // 若未设置时间，默认当前时间开始，按试卷时长推结束时间
             LocalDateTime now = LocalDateTime.now();
             exam.setStartTime(now);
             Integer duration = paper.getDuration();
@@ -185,7 +184,6 @@ public class ExamServiceImpl implements ExamService {
         if (count != null && count > 0) {
             throw new BusinessException(ErrorCode.EXAM_HAS_RECORDS);
         }
-        // 使用更新条件明确设置 deleted=1，避免生成缺少 SET 子句的 SQL
         LambdaUpdateWrapper<Exam> uw = new LambdaUpdateWrapper<>();
         uw.eq(Exam::getId, examId)
           .set(Exam::getDeleted, 1);
